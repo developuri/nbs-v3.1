@@ -3,9 +3,10 @@
 import { useState, useEffect } from 'react';
 import BlogManagement from '../components/BlogManagement';
 import BlogScrap from './components/BlogScrap';
+import GoogleSheet from './components/GoogleSheet';
 
 export default function Home() {
-  const [activeTab, setActiveTab] = useState<'management' | 'scrap'>('management');
+  const [activeTab, setActiveTab] = useState<'management' | 'scrap' | 'sheet'>('management');
   
   // iframe 오류 관련 코드 추가
   useEffect(() => {
@@ -29,41 +30,76 @@ export default function Home() {
   }, []);
   
   return (
-    <main className="container mx-auto max-w-6xl p-4">
-      <h1 className="text-3xl font-bold mb-6 text-center">블로그 스크랩 도구</h1>
+    <>
+      {/* 사이드바 */}
+      <aside className="w-64 bg-gray-50 border-r border-gray-200 h-full flex flex-col">
+        <div className="p-4 border-b border-gray-200">
+          <h2 className="text-lg font-medium text-gray-700">메뉴</h2>
+        </div>
+        <nav className="flex-1 overflow-y-auto p-2">
+          <ul className="space-y-1">
+            <li>
+              <button
+                onClick={() => setActiveTab('management')}
+                className={`w-full text-left px-4 py-3 rounded-lg flex items-center ${
+                  activeTab === 'management'
+                    ? 'bg-blue-100 text-blue-700'
+                    : 'text-gray-700 hover:bg-gray-100'
+                }`}
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
+                </svg>
+                블로그 주소 관리
+              </button>
+            </li>
+            <li>
+              <button
+                onClick={() => setActiveTab('scrap')}
+                className={`w-full text-left px-4 py-3 rounded-lg flex items-center ${
+                  activeTab === 'scrap'
+                    ? 'bg-blue-100 text-blue-700'
+                    : 'text-gray-700 hover:bg-gray-100'
+                }`}
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                </svg>
+                블로그 글 스크랩
+              </button>
+            </li>
+            <li>
+              <button
+                onClick={() => setActiveTab('sheet')}
+                className={`w-full text-left px-4 py-3 rounded-lg flex items-center ${
+                  activeTab === 'sheet'
+                    ? 'bg-blue-100 text-blue-700'
+                    : 'text-gray-700 hover:bg-gray-100'
+                }`}
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 10h18M3 14h18m-9-4v8m-7 0h14a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                </svg>
+                구글 시트 저장
+              </button>
+            </li>
+          </ul>
+        </nav>
+        <div className="p-4 border-t border-gray-200 text-xs text-gray-500">
+          version 1.0.0
+        </div>
+      </aside>
       
-      {/* 탭 메뉴 */}
-      <div className="flex border-b border-gray-200 mb-6">
-        <button
-          className={`py-2 px-4 text-lg font-medium ${
-            activeTab === 'management'
-              ? 'text-blue-600 border-b-2 border-blue-600'
-              : 'text-gray-500 hover:text-gray-700'
-          }`}
-          onClick={() => setActiveTab('management')}
-        >
-          블로그 주소 관리
-        </button>
-        <button
-          className={`py-2 px-4 text-lg font-medium ${
-            activeTab === 'scrap'
-              ? 'text-blue-600 border-b-2 border-blue-600'
-              : 'text-gray-500 hover:text-gray-700'
-          }`}
-          onClick={() => setActiveTab('scrap')}
-        >
-          블로그 글 스크랩
-        </button>
-      </div>
-      
-      {/* 탭 내용 */}
-      <div className="mt-4">
+      {/* 메인 컨텐츠 */}
+      <div className="flex-1 overflow-y-auto p-6">
         {activeTab === 'management' ? (
           <BlogManagement />
-        ) : (
+        ) : activeTab === 'scrap' ? (
           <BlogScrap />
+        ) : (
+          <GoogleSheet />
         )}
       </div>
-    </main>
+    </>
   );
 } 
