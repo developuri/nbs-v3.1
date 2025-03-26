@@ -1,14 +1,7 @@
 import { google } from 'googleapis';
 import { NextResponse } from 'next/server';
 
-// 서비스 계정 정보
-// 실제 애플리케이션에서는 환경 변수로 관리해야 합니다.
-const SERVICE_ACCOUNT = {
-  // 서비스 계정 정보를 여기에 추가
-  // 실제 서비스 계정 키는 환경 변수로 관리하고 여기에 직접 넣지 마세요.
-};
-
-interface SheetRequestBody {
+interface SheetData {
   sheetUrl: string;
   sheetName: string;
   titleColumn: string;
@@ -25,9 +18,54 @@ interface SheetRequestBody {
 
 export async function POST(request: Request) {
   try {
-    const body: SheetRequestBody = await request.json();
-    const { sheetUrl, sheetName, titleColumn, contentColumn, posts } = body;
-
+    // FormData 처리
+    const formData = await request.formData();
+    
+    // 인증 파일 가져오기
+    const credentialsFile = formData.get('credentials') as File;
+    if (!credentialsFile) {
+      return NextResponse.json({ 
+        success: false, 
+        error: '구글 서비스 계정 인증 파일이 없습니다.' 
+      }, { status: 400 });
+    }
+    
+    // 인증 파일 내용 읽기
+    const credentialsBuffer = await credentialsFile.arrayBuffer();
+    const credentialsText = new TextDecoder().decode(credentialsBuffer);
+    
+    // JSON 파싱 시도
+    let credentials;
+    try {
+      credentials = JSON.parse(credentialsText);
+    } catch (e) {
+      return NextResponse.json({ 
+        success: false, 
+        error: '유효한 JSON 형식의 인증 파일이 아닙니다.' 
+      }, { status: 400 });
+    }
+    
+    // 필수 필드 확인
+    if (!credentials.client_email || !credentials.private_key) {
+      return NextResponse.json({ 
+        success: false, 
+        error: '인증 파일에 필수 필드(client_email, private_key)가 없습니다.' 
+      }, { status: 400 });
+    }
+    
+    // 데이터 필드 가져오기
+    const dataField = formData.get('data');
+    if (!dataField) {
+      return NextResponse.json({ 
+        success: false, 
+        error: '시트 데이터가 없습니다.' 
+      }, { status: 400 });
+    }
+    
+    // 데이터 파싱
+    const data: SheetData = JSON.parse(dataField as string);
+    const { sheetUrl, sheetName, titleColumn, contentColumn, posts } = data;
+    
     // 시트 URL에서 시트 ID 추출
     const sheetIdMatch = sheetUrl.match(/spreadsheets\/d\/([a-zA-Z0-9_-]+)/);
     if (!sheetIdMatch || !sheetIdMatch[1]) {
@@ -42,13 +80,8 @@ export async function POST(request: Request) {
     const range = `${sheetName}!${titleColumn}:${contentColumn}`;
 
     // JWT 클라이언트 생성
-    // 실제 구현에서는 서비스 계정 키를 환경 변수로부터 가져와야 합니다.
-    // 이 예제에서는 간단한 구현을 위해 임시로 처리합니다.
     const auth = new google.auth.GoogleAuth({
-      // 환경 변수 또는 서비스 계정 정보 사용
-      credentials: process.env.GOOGLE_SERVICE_ACCOUNT_KEY 
-        ? JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT_KEY)
-        : SERVICE_ACCOUNT,
+      credentials,
       scopes: ['https://www.googleapis.com/auth/spreadsheets'],
     });
 
