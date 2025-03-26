@@ -17,7 +17,7 @@ export default function GoogleSheet() {
   const [isLoading, setIsLoading] = useState(false);
   const [credentialsFile, setCredentialsFile] = useState<File | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const [message, setMessage] = useState<{ text: string; type: 'success' | 'error' | '' }>({ 
+  const [message, setMessage] = useState<{ text: string; type: 'success' | 'error' | 'warning' | '' }>({ 
     text: '', 
     type: '' 
   });
@@ -116,10 +116,28 @@ export default function GoogleSheet() {
       });
 
       if (response.data.success) {
-        setMessage({ 
-          text: `성공적으로 ${scrapedPosts.length}개의 포스트를 구글 시트에 저장했습니다.`, 
-          type: 'success' 
-        });
+        // 중복 데이터가 있는지 확인
+        if (response.data.skippedRows && response.data.skippedRows > 0) {
+          if (response.data.updatedRows === 0) {
+            // 모든 데이터가 중복인 경우 warning으로 표시
+            setMessage({ 
+              text: response.data.message || '모든 포스트가 이미 시트에 존재합니다.', 
+              type: 'warning' 
+            });
+          } else {
+            // 일부 데이터만 중복인 경우 success로 표시하되 중복 정보도 포함
+            setMessage({ 
+              text: response.data.message || `${response.data.updatedRows}개의 새 포스트가 추가되었습니다. (${response.data.skippedRows}개 중복 건너뜀)`, 
+              type: 'success' 
+            });
+          }
+        } else {
+          // 중복 데이터 없이 모두 추가된 경우
+          setMessage({ 
+            text: response.data.message || `성공적으로 ${response.data.updatedRows}개의 포스트를 구글 시트에 저장했습니다.`, 
+            type: 'success' 
+          });
+        }
       } else {
         setMessage({ 
           text: response.data.error || '구글 시트 저장 중 오류가 발생했습니다.', 
@@ -275,6 +293,7 @@ export default function GoogleSheet() {
         {message.text && (
           <div className={`mt-3 p-3 rounded-md ${
             message.type === 'success' ? 'bg-green-50 text-green-800' : 
+            message.type === 'warning' ? 'bg-yellow-50 text-yellow-800' :
             message.type === 'error' ? 'bg-red-50 text-red-800' : ''
           }`}>
             {message.text}
@@ -284,6 +303,9 @@ export default function GoogleSheet() {
         <div className="mt-4">
           <p className="text-sm text-gray-500">
             <span className="font-medium">스크랩된 포스트:</span> {scrapedPosts.length}개
+          </p>
+          <p className="text-xs text-gray-500 mt-1">
+            중복된 제목의 포스트는 자동으로 건너뜁니다.
           </p>
         </div>
       </div>

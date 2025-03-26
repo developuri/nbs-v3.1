@@ -87,8 +87,36 @@ export async function POST(request: Request) {
 
     const sheets = google.sheets({ version: 'v4', auth });
 
+    // 기존 시트 데이터 가져오기
+    const existingDataResponse = await sheets.spreadsheets.values.get({
+      spreadsheetId,
+      range: `${sheetName}!${titleColumn}:${titleColumn}`, // 제목 열만 가져오기
+    });
+
+    // 기존 제목 목록 추출
+    const existingTitles: string[] = [];
+    const existingValues = existingDataResponse.data.values || [];
+    existingValues.forEach(row => {
+      if (row[0]) {
+        existingTitles.push(row[0].toString());
+      }
+    });
+
+    // 중복 데이터 필터링
+    const filteredPosts = posts.filter(post => !existingTitles.includes(post.title));
+
+    // 필터링 결과가 없으면 종료
+    if (filteredPosts.length === 0) {
+      return NextResponse.json({ 
+        success: true, 
+        message: '새로운 데이터가 없습니다. 모든 포스트가 이미 시트에 있습니다.',
+        updatedRows: 0,
+        skippedRows: posts.length
+      });
+    }
+
     // 데이터 준비 (2차원 배열로 변환)
-    const values = posts.map(post => {
+    const values = filteredPosts.map(post => {
       // 각 열에 맞게 데이터 배치
       const rowData: string[] = [];
       
@@ -121,10 +149,13 @@ export async function POST(request: Request) {
       },
     });
 
+    const skippedRows = posts.length - filteredPosts.length;
+    
     return NextResponse.json({ 
       success: true, 
-      message: `${posts.length}개의 포스트가 성공적으로 시트에 추가되었습니다.`,
-      updatedRows: response.data.updates?.updatedRows || 0
+      message: `${filteredPosts.length}개의 새 포스트가 성공적으로 시트에 추가되었습니다.${skippedRows > 0 ? ` (${skippedRows}개의 중복 포스트 건너뜀)` : ''}`,
+      updatedRows: response.data.updates?.updatedRows || 0,
+      skippedRows
     });
 
   } catch (error: any) {
