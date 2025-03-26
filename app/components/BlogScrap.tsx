@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import axios from 'axios';
 import { format } from 'date-fns';
 import { useBlogStore, BlogPost } from '../../store/blogStore';
@@ -8,6 +8,19 @@ import { useBlogStore, BlogPost } from '../../store/blogStore';
 interface KeywordTag {
   id: string;
   text: string;
+}
+
+// 진행 상태 인터페이스
+interface ScrapProgress {
+  current: number;
+  total: number;
+  percent: number;
+  title: string;
+}
+
+// SSE 이벤트 타입 정의
+interface SSEEvent extends Event {
+  data: string;
 }
 
 export default function BlogScrap() {
@@ -18,6 +31,11 @@ export default function BlogScrap() {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [selectedPost, setSelectedPost] = useState<BlogPost | null>(null);
+  
+  // 진행률 관련 상태
+  const [progress, setProgress] = useState<ScrapProgress | null>(null);
+  const [totalFound, setTotalFound] = useState<number | null>(null);
+  const [currentBlogName, setCurrentBlogName] = useState<string | null>(null);
   
   const handleAddKeyword = () => {
     if (!keywordInput.trim()) return;
@@ -60,52 +78,127 @@ export default function BlogScrap() {
       // 스크랩 시작 시 이전 결과 초기화
       clearScrapedPosts();
       setSelectedPost(null);
-      
-      let totalPostsFound = 0;
+      setProgress(null);
+      setTotalFound(null);
+      setCurrentBlogName(null);
       
       // 키워드 배열 생성
       const keywordList = keywords.map(k => k.text);
       
       for (const blog of blogs) {
         try {
-          const response = await axios.post('/api/scrape', {
-            url: blog.url,
-            keywords: keywordList,
+          setCurrentBlogName(blog.name);
+          
+          // SSE를 사용한 스트리밍 방식으로 요청
+          const eventSource = new EventSource(`/api/scrape/stream?url=${encodeURIComponent(blog.url)}&keywords=${encodeURIComponent(JSON.stringify(keywordList))}`);
+          
+          // 이벤트 리스너 등록
+          await new Promise<void>((resolve, reject) => {
+            // 스크랩 시작 이벤트
+            eventSource.addEventListener('start', (event) => {
+              const data = JSON.parse((event as SSEEvent).data);
+              console.log('스크랩 시작:', data.message);
+            });
+            
+            // 블로그 정보 이벤트
+            eventSource.addEventListener('blog', (event) => {
+              const data = JSON.parse((event as SSEEvent).data);
+              setCurrentBlogName(data.blogName);
+            });
+            
+            // 포스트 개수 이벤트
+            eventSource.addEventListener('count', (event) => {
+              const data = JSON.parse((event as SSEEvent).data);
+              setTotalFound(data.total);
+              console.log(`${data.total}개의 포스트를 찾았습니다.`);
+            });
+            
+            // 진행 상황 이벤트
+            eventSource.addEventListener('progress', (event) => {
+              const progressData = JSON.parse((event as SSEEvent).data);
+              setProgress(progressData);
+            });
+            
+            // 포스트 데이터 이벤트
+            eventSource.addEventListener('post', (event) => {
+              const post = JSON.parse((event as SSEEvent).data);
+              addScrapedPost({
+                blogId: blog.id,
+                title: post.title,
+                content: post.content,
+                url: post.url,
+                date: post.date,
+              });
+            });
+            
+            // 완료 이벤트
+            eventSource.addEventListener('complete', (event) => {
+              const data = JSON.parse((event as SSEEvent).data);
+              console.log('스크랩 완료:', data.message);
+              eventSource.close();
+              resolve();
+            });
+            
+            // 오류 이벤트
+            eventSource.addEventListener('error', (event) => {
+              console.error('SSE 오류:', event);
+              eventSource.close();
+              
+              // 오류 데이터가 있으면 파싱
+              try {
+                const errorData = JSON.parse((event as SSEEvent).data);
+                setError(errorData.message);
+                // 대체 데이터가 있으면 처리
+                if (errorData.posts) {
+                  for (const post of errorData.posts) {
+                    addScrapedPost({
+                      blogId: blog.id,
+                      title: post.title,
+                      content: post.content,
+                      url: post.url,
+                      date: post.date,
+                    });
+                  }
+                }
+              } catch (e) {
+                setError('블로그 스크랩 중 오류가 발생했습니다.');
+              }
+              
+              resolve();
+            });
           });
           
-          const { posts } = response.data;
-          console.log(`'${blog.name}' 블로그에서 ${posts.length}개의 포스트를 찾았습니다.`);
-          totalPostsFound += posts.length;
-          
-          // 가져온 각 포스트를 저장
-          for (const post of posts) {
-            addScrapedPost({
-              blogId: blog.id,
-              title: post.title,
-              content: post.content,
-              url: post.url,
-              date: post.date,
-            });
-          }
         } catch (blogError) {
           console.error(`'${blog.name}' 블로그 스크랩 오류:`, blogError);
         }
       }
       
-      if (totalPostsFound === 0) {
-        setError('포스트를 찾을 수 없습니다. 다른 키워드를 시도해보세요.');
+      // 스크랩 완료 후 첫 번째 포스트 자동 선택
+      if (scrapedPosts.length > 0) {
+        setSelectedPost(scrapedPosts[0]);
       } else {
-        setError(null);
+        setError('포스트를 찾을 수 없습니다. 다른 키워드를 시도해보세요.');
       }
+      
     } catch (error) {
       console.error('스크랩 오류:', error);
       setError('블로그 스크랩 중 오류가 발생했습니다.');
     } finally {
       setIsLoading(false);
+      setProgress(null);
+      setCurrentBlogName(null);
     }
   };
   
+  // 스크랩된 포스트 목록이 변경되면 첫 번째 포스트 자동 선택
+  useEffect(() => {
+    if (scrapedPosts.length > 0 && !selectedPost) {
+      setSelectedPost(scrapedPosts[0]);
+    }
+  }, [scrapedPosts, selectedPost]);
+  
   const handleViewContent = async (post: BlogPost) => {
+    // 이미 내용이 있으면 바로 선택
     if (post.content) {
       setSelectedPost(post);
       return;
@@ -123,13 +216,7 @@ export default function BlogScrap() {
       // 오류가 있는 경우 메시지를 표시
       if (error) {
         console.error("컨텐츠 가져오기 오류:", error);
-        const errorContent = `
-          <div class="error-content">
-            <p>포스트 내용을 가져오는 중 오류가 발생했습니다.</p>
-            <p>${error}</p>
-            <p><a href="${post.url}" target="_blank" rel="noopener noreferrer">원본 포스트로 이동하기</a></p>
-          </div>
-        `;
+        const errorContent = `내용을 가져오는 중 오류가 발생했습니다. ${error}`;
         
         const updatedPost = { ...post, content: errorContent };
         addScrapedPost(updatedPost);
@@ -144,17 +231,10 @@ export default function BlogScrap() {
     } catch (error: any) {
       console.error('포스트 내용 가져오기 오류:', error);
       const errorMessage = error.response?.data?.error || error.message || '알 수 없는 오류가 발생했습니다.';
-      const errorContent = `
-        <div class="error-content">
-          <p>포스트 내용을 가져오는 중 오류가 발생했습니다.</p>
-          <p>${errorMessage}</p>
-          <p><a href="${post.url}" target="_blank" rel="noopener noreferrer">원본 포스트로 이동하여 확인해주세요.</a></p>
-        </div>
-      `;
       
       setSelectedPost({
         ...post, 
-        content: errorContent
+        content: `내용을 가져오는 중 오류가 발생했습니다. ${errorMessage}`
       });
     }
   };
@@ -169,18 +249,25 @@ export default function BlogScrap() {
   };
   
   return (
-    <div>
-      <div className="mb-6 p-4 bg-blue-50 border border-blue-200 rounded-md text-blue-800">
-        <h3 className="font-medium mb-2">네이버 블로그 RSS 피드로 데이터를 가져옵니다</h3>
+    <div className="max-w-6xl mx-auto">
+      <h2 className="text-2xl font-bold mb-6">블로그 글 스크랩</h2>
+      
+      <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-6 text-blue-800">
+        <h3 className="font-medium mb-2 flex items-center">
+          <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+          </svg>
+          네이버 블로그 RSS 피드로 데이터를 가져옵니다
+        </h3>
         <p>등록한 네이버 블로그의 RSS 피드를 활용하여 최신 글을 스크랩합니다.</p>
         <p className="mt-1 text-sm">일부 블로그는 RSS 피드를 제공하지 않을 수 있습니다. 블로그 설정에서 RSS 피드를 활성화하면 정상적으로 데이터를 가져올 수 있습니다.</p>
       </div>
       
-      <div className="mb-6">
-        <h2 className="text-xl font-semibold mb-4">스크랩 필터</h2>
+      <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6 mb-6">
+        <h3 className="text-lg font-semibold mb-4">스크랩 필터</h3>
         
-        <div className="mb-4">
-          <label className="block text-sm font-medium text-gray-700 mb-1">
+        <div className="mb-5">
+          <label className="block text-sm font-medium text-gray-700 mb-2">
             키워드 추가
           </label>
           <div className="flex">
@@ -190,29 +277,30 @@ export default function BlogScrap() {
               onChange={(e) => setKeywordInput(e.target.value)}
               onKeyPress={handleKeyPress}
               placeholder="검색 키워드 (쉼표로 구분하여 여러 개 입력)"
-              className="flex-grow p-2 border border-gray-300 rounded-l"
+              className="flex-grow p-3 border border-gray-300 rounded-l-md focus:ring-blue-500 focus:border-blue-500"
             />
             <button
               type="button"
               onClick={handleAddKeyword}
-              className="bg-blue-500 text-white px-4 py-2 rounded-r hover:bg-blue-600"
+              className="bg-blue-600 text-white px-4 py-3 rounded-r-md hover:bg-blue-700 transition-colors"
             >
               추가
             </button>
           </div>
-          <p className="text-sm text-gray-500 mt-1">
+          <p className="text-sm text-gray-500 mt-2">
             여러 키워드는 쉼표(,)로 구분하여 입력하거나 키워드를 하나씩 추가할 수 있습니다.
           </p>
           
           {keywords.length > 0 && (
-            <div className="flex flex-wrap gap-2 mt-2">
+            <div className="flex flex-wrap gap-2 mt-3">
               {keywords.map(keyword => (
                 <div key={keyword.id} className="bg-blue-100 text-blue-800 px-3 py-1 rounded-full flex items-center">
                   <span>{keyword.text}</span>
                   <button
                     type="button"
                     onClick={() => handleRemoveKeyword(keyword.id)}
-                    className="ml-2 text-blue-500 hover:text-blue-700 focus:outline-none"
+                    className="ml-2 text-blue-600 hover:text-blue-800 focus:outline-none"
+                    aria-label="키워드 삭제"
                   >
                     &times;
                   </button>
@@ -222,13 +310,28 @@ export default function BlogScrap() {
           )}
         </div>
         
-        <div className="flex space-x-2">
+        <div className="flex space-x-3">
           <button
             onClick={handleScrap}
-            className="bg-blue-500 text-white px-4 py-2 rounded hover:bg-blue-600 disabled:bg-blue-300"
+            className="bg-blue-600 text-white px-5 py-2 rounded-md hover:bg-blue-700 disabled:bg-blue-300 transition-colors flex items-center"
             disabled={isLoading}
           >
-            {isLoading ? '스크랩 중...' : '스크랩 시작'}
+            {isLoading ? (
+              <>
+                <svg className="animate-spin -ml-1 mr-2 h-4 w-4 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                </svg>
+                스크랩 중...
+              </>
+            ) : (
+              <>
+                <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                </svg>
+                스크랩 시작
+              </>
+            )}
           </button>
           
           <button
@@ -238,24 +341,68 @@ export default function BlogScrap() {
                 setSelectedPost(null);
               }
             }}
-            className="bg-red-500 text-white px-4 py-2 rounded hover:bg-red-600"
+            className="bg-red-600 text-white px-5 py-2 rounded-md hover:bg-red-700 disabled:bg-red-300 transition-colors flex items-center"
             disabled={scrapedPosts.length === 0}
           >
+            <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+            </svg>
             결과 초기화
           </button>
         </div>
         
-        {error && <p className="text-red-500 mt-2">{error}</p>}
+        {/* 진행 상황 표시 */}
+        {isLoading && (
+          <div className="mt-4">
+            <div className="flex justify-between mb-1">
+              <span className="text-sm font-medium text-blue-600">
+                {currentBlogName ? `${currentBlogName} 스크랩 중` : '스크랩 준비 중...'}
+              </span>
+              {progress && (
+                <span className="text-sm font-medium text-blue-600">
+                  {progress.current}/{progress.total} ({progress.percent}%)
+                </span>
+              )}
+            </div>
+            
+            <div className="w-full bg-gray-200 rounded-full h-2.5">
+              <div 
+                className="bg-blue-600 h-2.5 rounded-full transition-all duration-300" 
+                style={{ width: progress ? `${progress.percent}%` : '0%' }}
+              ></div>
+            </div>
+            
+            {progress && (
+              <div className="mt-1 text-xs text-gray-500 truncate">
+                현재 포스트: {progress.title}
+              </div>
+            )}
+          </div>
+        )}
+        
+        {error && (
+          <div className="mt-4 p-3 bg-red-50 border border-red-300 text-red-700 rounded-md">
+            {error}
+          </div>
+        )}
       </div>
       
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <div>
-          <h2 className="text-xl font-semibold mb-4">스크랩 결과 ({scrapedPosts.length})</h2>
+        <div className="bg-white rounded-lg shadow-sm border border-gray-200">
+          <div className="border-b border-gray-200 p-4 flex justify-between items-center">
+            <h3 className="text-lg font-semibold">스크랩 결과 ({scrapedPosts.length})</h3>
+          </div>
           
           {scrapedPosts.length === 0 ? (
-            <p className="text-gray-500">스크랩된 포스트가 없습니다.</p>
+            <div className="p-6 text-gray-500 text-center">
+              <svg xmlns="http://www.w3.org/2000/svg" className="h-12 w-12 mx-auto mb-2 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 13h6m-3-3v6m-9 1V7a2 2 0 012-2h6l2 2h6a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2z" />
+              </svg>
+              <p>스크랩된 포스트가 없습니다.</p>
+              <p className="text-sm mt-1">스크랩 버튼을 클릭하여 포스트를 가져오세요.</p>
+            </div>
           ) : (
-            <ul className="border border-gray-200 rounded divide-y divide-gray-200 max-h-[600px] overflow-y-auto">
+            <ul className="divide-y divide-gray-200 max-h-[600px] overflow-y-auto">
               {scrapedPosts.map((post) => {
                 // 해당 블로그 정보 찾기
                 const blog = blogs.find(blog => blog.id === post.blogId);
@@ -264,13 +411,16 @@ export default function BlogScrap() {
                   <li 
                     key={post.id} 
                     className={`p-4 hover:bg-gray-50 cursor-pointer ${
-                      selectedPost?.id === post.id ? 'bg-blue-50' : ''
+                      selectedPost?.id === post.id ? 'bg-blue-50 border-l-4 border-blue-500' : ''
                     }`}
                   >
                     <div className="flex justify-between">
                       <div onClick={() => handleViewContent(post)} className="flex-1 min-w-0 mr-2">
-                        <h3 className="font-medium break-words whitespace-normal">{post.title}</h3>
-                        <p className="text-sm text-gray-500">
+                        <h4 className="font-medium break-words whitespace-normal">{post.title}</h4>
+                        <p className="text-sm text-gray-500 mt-1 flex items-center">
+                          <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                          </svg>
                           {blog?.name} · {post.date}
                         </p>
                       </div>
@@ -279,9 +429,12 @@ export default function BlogScrap() {
                           e.stopPropagation();
                           handleRemovePost(post.id);
                         }}
-                        className="text-red-500 hover:text-red-700 text-sm flex-shrink-0"
+                        className="text-red-500 hover:text-red-700 text-sm flex-shrink-0 p-2 rounded-full hover:bg-red-50"
+                        aria-label="포스트 삭제"
                       >
-                        삭제
+                        <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                        </svg>
                       </button>
                     </div>
                   </li>
@@ -290,15 +443,26 @@ export default function BlogScrap() {
             </ul>
           )}
         </div>
-        
-        <div>
-          <h2 className="text-xl font-semibold mb-4">포스트 내용</h2>
+
+        <div className="bg-white rounded-lg shadow-sm border border-gray-200">
+          <div className="border-b border-gray-200 p-4">
+            <h3 className="text-lg font-semibold">포스트 내용</h3>
+          </div>
           
           {selectedPost ? (
-            <div className="border border-gray-200 rounded p-4 max-h-[600px] overflow-y-auto">
-              <h3 className="text-lg font-medium mb-2 break-words whitespace-normal">{selectedPost.title}</h3>
-              <p className="text-sm text-gray-500 mb-4">
-                {selectedPost.date} · <a href={selectedPost.url} target="_blank" rel="noopener noreferrer" className="text-blue-500 hover:underline">원본 보기</a>
+            <div className="p-4 max-h-[600px] overflow-y-auto">
+              <h4 className="text-xl font-medium mb-2 break-words whitespace-normal">{selectedPost.title}</h4>
+              <p className="text-sm text-gray-500 mb-4 flex items-center">
+                <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                </svg>
+                {selectedPost.date} · 
+                <a href={selectedPost.url} target="_blank" rel="noopener noreferrer" className="ml-1 text-blue-500 hover:underline flex items-center">
+                  원본 보기
+                  <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 ml-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+                  </svg>
+                </a>
               </p>
               
               {/* 로딩 중 상태 표시 */}
@@ -318,46 +482,18 @@ export default function BlogScrap() {
               )}
               
               {/* 컨텐츠 표시 영역 */}
-              <div
-                key={`content-${selectedPost.id}`}
-                className="prose max-w-none blog-content"
-                dangerouslySetInnerHTML={{ 
-                  __html: selectedPost.content || '내용을 불러오는 중...'
-                }}
-              />
-              
-              {/* 404 오류 시 */}
-              {selectedPost.content && (selectedPost.content.includes('404') || selectedPost.content.includes('찾을 수 없습니다')) && (
-                <div className="mt-4 p-3 bg-yellow-50 border border-yellow-200 rounded text-yellow-800">
-                  <p className="font-medium">포스트를 찾을 수 없습니다.</p>
-                  <p className="text-sm mt-1">포스트가 삭제되었거나 접근 권한이 없을 수 있습니다.</p>
-                  <p className="text-sm mt-1">
-                    <a href={selectedPost.url} target="_blank" rel="noopener noreferrer" className="text-blue-500 hover:underline">
-                      원본 링크로 직접 확인해보세요.
-                    </a>
-                  </p>
-                </div>
-              )}
-              
-              {/* 네이버 블로그 콘텐츠 접근 제한 안내 */}
-              {selectedPost.content && selectedPost.content.includes('블로그 포스트 내용을 가져오지 못했습니다') && (
-                <div className="mt-4 p-3 bg-blue-50 border border-blue-200 rounded text-blue-800">
-                  <p className="font-medium">네이버 블로그 접근 제한 안내</p>
-                  <p className="text-sm mt-1">네이버 블로그의 보안 정책으로 인해 외부에서 콘텐츠를 가져오지 못했습니다.</p>
-                  <p className="text-sm mt-1">
-                    이 문제를 해결하기 위한 방법:
-                  </p>
-                  <ol className="text-sm mt-1 list-decimal list-inside">
-                    <li>브라우저에서 직접 네이버 블로그에 로그인한 후 다시 시도</li>
-                    <li>블로그 소유자인 경우 블로그 설정에서 외부 접근 허용 확인</li>
-                    <li>원본 블로그에서 직접 콘텐츠 확인</li>
-                  </ol>
-                </div>
-              )}
+              <div className="prose max-w-none">
+                {selectedPost.content.split('\n').map((paragraph, index) => (
+                  paragraph.trim() && <p key={index} className="mb-4">{paragraph}</p>
+                ))}
+              </div>
             </div>
           ) : (
-            <div className="border border-gray-200 rounded p-4 text-center text-gray-500">
-              포스트를 선택하면 내용이 여기에 표시됩니다.
+            <div className="p-6 text-gray-500 text-center">
+              <svg xmlns="http://www.w3.org/2000/svg" className="h-12 w-12 mx-auto mb-2 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+              </svg>
+              <p>포스트를 선택하여 내용을 확인하세요.</p>
             </div>
           )}
         </div>
