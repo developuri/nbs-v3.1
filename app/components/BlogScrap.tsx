@@ -3,12 +3,7 @@
 import { useState, useEffect } from 'react';
 import axios from 'axios';
 import { format } from 'date-fns';
-import { useBlogStore, BlogPost } from '../../store/blogStore';
-
-interface KeywordTag {
-  id: string;
-  text: string;
-}
+import { useBlogStore, BlogPost, KeywordTag } from '../../store/blogStore';
 
 // 진행 상태 인터페이스
 interface ScrapProgress {
@@ -24,10 +19,19 @@ interface SSEEvent extends Event {
 }
 
 export default function BlogScrap() {
-  const { blogs, scrapedPosts, addScrapedPost, removeScrapedPost, clearScrapedPosts } = useBlogStore();
+  const { 
+    blogs, 
+    scrapedPosts, 
+    keywords,
+    addScrapedPost, 
+    removeScrapedPost, 
+    clearScrapedPosts,
+    setKeywords,
+    addKeyword: storeAddKeyword,
+    removeKeyword: storeRemoveKeyword
+  } = useBlogStore();
   
   const [keywordInput, setKeywordInput] = useState('');
-  const [keywords, setKeywords] = useState<KeywordTag[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [selectedPost, setSelectedPost] = useState<BlogPost | null>(null);
@@ -41,21 +45,21 @@ export default function BlogScrap() {
     if (!keywordInput.trim()) return;
     
     // 쉼표로 구분된 키워드를 배열로 변환
-    const newKeywords = keywordInput
+    const newKeywordsText = keywordInput
       .split(',')
       .map(k => k.trim())
       .filter(k => k.length > 0)
-      .filter(k => !keywords.some(existingKeyword => existingKeyword.text === k))
-      .map(k => ({ id: Date.now() + Math.random().toString(), text: k }));
+      .filter(k => !keywords.some(existingKeyword => existingKeyword.text === k));
     
-    if (newKeywords.length > 0) {
-      setKeywords([...keywords, ...newKeywords]);
+    if (newKeywordsText.length > 0) {
+      // 각 키워드를 스토어에 개별적으로 추가
+      newKeywordsText.forEach(text => storeAddKeyword(text));
       setKeywordInput('');
     }
   };
   
   const handleRemoveKeyword = (id: string) => {
-    setKeywords(keywords.filter(k => k.id !== id));
+    storeRemoveKeyword(id);
   };
   
   const handleKeyPress = (e: React.KeyboardEvent) => {
@@ -173,10 +177,17 @@ export default function BlogScrap() {
         }
       }
       
-      // 스크랩 완료 후 첫 번째 포스트 자동 선택
-      if (scrapedPosts.length > 0) {
-        setSelectedPost(scrapedPosts[0]);
-      } else {
+      // 모든 블로그 스크랩 완료 후, 저장된 포스트가 있는지 확인
+      // 상태 업데이트는 비동기적이므로, 여기서 useBlogStore()에서 직접 스크랩된 포스트를 가져옴
+      const currentScrapedPosts = useBlogStore.getState().scrapedPosts;
+      
+      if (currentScrapedPosts.length > 0) {
+        // 포스트가 있으면 첫번째 포스트 선택
+        setSelectedPost(currentScrapedPosts[0]);
+        // 오류 메시지가 남아있으면 지움
+        setError(null);
+      } else if (blogs.length > 0) {
+        // 블로그는 있지만 스크랩된 포스트가 없는 경우
         setError('포스트를 찾을 수 없습니다. 다른 키워드를 시도해보세요.');
       }
       

@@ -355,13 +355,13 @@ function filterPostsByKeywords(posts: any[], keywords?: string[]) {
   }
   
   return posts.filter((post) => {
-    // 어느 하나의 키워드라도 포함되어 있으면 true 반환 (OR 조건)
+    // 어느 하나의 키워드라도 제목에 포함되어 있으면 true 반환 (OR 조건)
     return keywords.some(keyword => {
       if (!keyword || keyword.trim() === '') return false;
       
       const lowerKeyword = keyword.toLowerCase();
-      return post.title.toLowerCase().includes(lowerKeyword) || 
-             (post.description && post.description.toLowerCase().includes(lowerKeyword));
+      // 제목에만 키워드가 있는지 확인 (본문 내용은 검색하지 않음)
+      return post.title.toLowerCase().includes(lowerKeyword);
     });
   });
 }

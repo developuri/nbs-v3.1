@@ -15,12 +15,23 @@ export default function GoogleSheet() {
   const [titleColumn, setTitleColumn] = useState(googleSheetInfo.titleColumn);
   const [contentColumn, setContentColumn] = useState(googleSheetInfo.contentColumn);
   const [isLoading, setIsLoading] = useState(false);
-  const [credentialsFile, setCredentialsFile] = useState<File | null>(null);
+  const [credentialsFile, setCredentialsFile] = useState<File | null>(googleSheetInfo.credentials);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [message, setMessage] = useState<{ text: string; type: 'success' | 'error' | 'warning' | '' }>({ 
     text: '', 
     type: '' 
   });
+
+  // 구글시트 정보가 변경될 때마다 로컬 상태 업데이트
+  useEffect(() => {
+    setSheetUrl(googleSheetInfo.sheetUrl);
+    setSheetName(googleSheetInfo.sheetName);
+    setTitleColumn(googleSheetInfo.titleColumn);
+    setContentColumn(googleSheetInfo.contentColumn);
+    if (googleSheetInfo.credentials) {
+      setCredentialsFile(googleSheetInfo.credentials);
+    }
+  }, [googleSheetInfo]);
 
   // Store에 값을 저장하는 함수
   const saveToStore = (field: string, value: string) => {

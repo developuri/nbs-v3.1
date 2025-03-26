@@ -6,7 +6,7 @@ const inter = Inter({ subsets: ['latin'] });
 
 export const metadata: Metadata = {
   title: '블로그 스크랩 도구',
-  description: '네이버 블로그 글을 스크랩하는 도구입니다.',
+  description: '네이버 블로그 포스트를 스크랩하는 도구',
 };
 
 export default function RootLayout({
@@ -17,6 +17,7 @@ export default function RootLayout({
   return (
     <html lang="ko">
       <head>
+        <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet" />
         <meta name="viewport" content="width=device-width, initial-scale=1" />
         <meta httpEquiv="X-Frame-Options" content="SAMEORIGIN" />
         <meta httpEquiv="Content-Security-Policy" content="frame-ancestors 'self';" />
@@ -34,8 +35,13 @@ export default function RootLayout({
           }
         `}</style>
       </head>
-      <body className={inter.className}>
-        {children}
+      <body className={`${inter.className} h-screen flex flex-col`}>
+        <header className="bg-blue-600 text-white p-4 shadow-md">
+          <h1 className="text-xl font-bold">블로그 스크랩 도구</h1>
+        </header>
+        <main className="flex-1 flex overflow-hidden">
+          {children}
+        </main>
       </body>
     </html>
   );
