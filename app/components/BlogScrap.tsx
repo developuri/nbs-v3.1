@@ -5,15 +5,47 @@ import axios from 'axios';
 import { format } from 'date-fns';
 import { useBlogStore, BlogPost } from '../../store/blogStore';
 
+interface KeywordTag {
+  id: string;
+  text: string;
+}
+
 export default function BlogScrap() {
   const { blogs, scrapedPosts, addScrapedPost, removeScrapedPost, clearScrapedPosts } = useBlogStore();
   
-  const [keyword, setKeyword] = useState('');
-  const [startDate, setStartDate] = useState('');
-  const [endDate, setEndDate] = useState('');
+  const [keywordInput, setKeywordInput] = useState('');
+  const [keywords, setKeywords] = useState<KeywordTag[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [selectedPost, setSelectedPost] = useState<BlogPost | null>(null);
+  
+  const handleAddKeyword = () => {
+    if (!keywordInput.trim()) return;
+    
+    // 쉼표로 구분된 키워드를 배열로 변환
+    const newKeywords = keywordInput
+      .split(',')
+      .map(k => k.trim())
+      .filter(k => k.length > 0)
+      .filter(k => !keywords.some(existingKeyword => existingKeyword.text === k))
+      .map(k => ({ id: Date.now() + Math.random().toString(), text: k }));
+    
+    if (newKeywords.length > 0) {
+      setKeywords([...keywords, ...newKeywords]);
+      setKeywordInput('');
+    }
+  };
+  
+  const handleRemoveKeyword = (id: string) => {
+    setKeywords(keywords.filter(k => k.id !== id));
+  };
+  
+  const handleKeyPress = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      handleAddKeyword();
+    }
+  };
   
   const handleScrap = async () => {
     if (blogs.length === 0) {
@@ -24,15 +56,21 @@ export default function BlogScrap() {
     try {
       setIsLoading(true);
       setError(null);
+      
+      // 스크랩 시작 시 이전 결과 초기화
+      clearScrapedPosts();
+      setSelectedPost(null);
+      
       let totalPostsFound = 0;
+      
+      // 키워드 배열 생성
+      const keywordList = keywords.map(k => k.text);
       
       for (const blog of blogs) {
         try {
           const response = await axios.post('/api/scrape', {
             url: blog.url,
-            keyword,
-            startDate,
-            endDate,
+            keywords: keywordList,
           });
           
           const { posts } = response.data;
@@ -55,7 +93,7 @@ export default function BlogScrap() {
       }
       
       if (totalPostsFound === 0) {
-        setError('포스트를 찾을 수 없습니다. 다른 키워드나 날짜 범위를 시도해보세요.');
+        setError('포스트를 찾을 수 없습니다. 다른 키워드를 시도해보세요.');
       } else {
         setError(null);
       }
@@ -141,43 +179,47 @@ export default function BlogScrap() {
       <div className="mb-6">
         <h2 className="text-xl font-semibold mb-4">스크랩 필터</h2>
         
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
-              키워드
-            </label>
+        <div className="mb-4">
+          <label className="block text-sm font-medium text-gray-700 mb-1">
+            키워드 추가
+          </label>
+          <div className="flex">
             <input
               type="text"
-              value={keyword}
-              onChange={(e) => setKeyword(e.target.value)}
-              placeholder="검색 키워드 (선택사항)"
-              className="w-full p-2 border border-gray-300 rounded"
+              value={keywordInput}
+              onChange={(e) => setKeywordInput(e.target.value)}
+              onKeyPress={handleKeyPress}
+              placeholder="검색 키워드 (쉼표로 구분하여 여러 개 입력)"
+              className="flex-grow p-2 border border-gray-300 rounded-l"
             />
+            <button
+              type="button"
+              onClick={handleAddKeyword}
+              className="bg-blue-500 text-white px-4 py-2 rounded-r hover:bg-blue-600"
+            >
+              추가
+            </button>
           </div>
+          <p className="text-sm text-gray-500 mt-1">
+            여러 키워드는 쉼표(,)로 구분하여 입력하거나 키워드를 하나씩 추가할 수 있습니다.
+          </p>
           
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
-              시작일
-            </label>
-            <input
-              type="date"
-              value={startDate}
-              onChange={(e) => setStartDate(e.target.value)}
-              className="w-full p-2 border border-gray-300 rounded"
-            />
-          </div>
-          
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
-              종료일
-            </label>
-            <input
-              type="date"
-              value={endDate}
-              onChange={(e) => setEndDate(e.target.value)}
-              className="w-full p-2 border border-gray-300 rounded"
-            />
-          </div>
+          {keywords.length > 0 && (
+            <div className="flex flex-wrap gap-2 mt-2">
+              {keywords.map(keyword => (
+                <div key={keyword.id} className="bg-blue-100 text-blue-800 px-3 py-1 rounded-full flex items-center">
+                  <span>{keyword.text}</span>
+                  <button
+                    type="button"
+                    onClick={() => handleRemoveKeyword(keyword.id)}
+                    className="ml-2 text-blue-500 hover:text-blue-700 focus:outline-none"
+                  >
+                    &times;
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
         
         <div className="flex space-x-2">
@@ -226,8 +268,8 @@ export default function BlogScrap() {
                     }`}
                   >
                     <div className="flex justify-between">
-                      <div onClick={() => handleViewContent(post)}>
-                        <h3 className="font-medium truncate">{post.title}</h3>
+                      <div onClick={() => handleViewContent(post)} className="flex-1 min-w-0 mr-2">
+                        <h3 className="font-medium break-words whitespace-normal">{post.title}</h3>
                         <p className="text-sm text-gray-500">
                           {blog?.name} · {post.date}
                         </p>
@@ -237,7 +279,7 @@ export default function BlogScrap() {
                           e.stopPropagation();
                           handleRemovePost(post.id);
                         }}
-                        className="text-red-500 hover:text-red-700 text-sm"
+                        className="text-red-500 hover:text-red-700 text-sm flex-shrink-0"
                       >
                         삭제
                       </button>
@@ -254,7 +296,7 @@ export default function BlogScrap() {
           
           {selectedPost ? (
             <div className="border border-gray-200 rounded p-4 max-h-[600px] overflow-y-auto">
-              <h3 className="text-lg font-medium mb-2">{selectedPost.title}</h3>
+              <h3 className="text-lg font-medium mb-2 break-words whitespace-normal">{selectedPost.title}</h3>
               <p className="text-sm text-gray-500 mb-4">
                 {selectedPost.date} · <a href={selectedPost.url} target="_blank" rel="noopener noreferrer" className="text-blue-500 hover:underline">원본 보기</a>
               </p>

@@ -1,11 +1,10 @@
 import { NextResponse } from 'next/server';
 import axios from 'axios';
-import { parseISO, isWithinInterval } from 'date-fns';
 import { XMLParser } from 'fast-xml-parser';
 
 export async function POST(request: Request) {
   try {
-    const { url, keyword, startDate, endDate } = await request.json();
+    const { url, keywords } = await request.json();
 
     if (!url) {
       return NextResponse.json(
@@ -78,8 +77,8 @@ export async function POST(request: Request) {
         });
       }
       
-      // 키워드 및 날짜 필터링
-      const filteredPosts = filterPosts(posts, keyword, startDate, endDate);
+      // 키워드 필터링
+      const filteredPosts = filterPostsByKeywords(posts, keywords);
       console.log(`필터링 후 포스트 수: ${filteredPosts.length}`);
 
       return NextResponse.json({
@@ -94,7 +93,7 @@ export async function POST(request: Request) {
         console.log('RSS 피드를 찾을 수 없습니다. 대체 데이터를 사용합니다.');
         const blogName = await getBlogNameFromUrl(url);
         const dummyPosts = generateDummyPosts(url, 5);
-        const filteredPosts = filterPosts(dummyPosts, keyword, startDate, endDate);
+        const filteredPosts = filterPostsByKeywords(dummyPosts, keywords);
         
         return NextResponse.json({
           blogName,
@@ -175,34 +174,21 @@ function generateDummyPosts(blogUrl: string, count: number) {
   return posts;
 }
 
-// 포스트 필터링
-function filterPosts(posts: any[], keyword?: string, startDate?: string, endDate?: string) {
+// 포스트를 키워드로 필터링 (여러 키워드 지원)
+function filterPostsByKeywords(posts: any[], keywords?: string[]) {
+  // 키워드가 없거나 빈 배열이면 모든 포스트 반환
+  if (!keywords || keywords.length === 0) {
+    return posts;
+  }
+  
   return posts.filter((post) => {
-    let isMatch = true;
-
-    // 키워드 필터링
-    if (keyword && keyword.trim() !== '') {
+    // 어느 하나의 키워드라도 포함되어 있으면 true 반환 (OR 조건)
+    return keywords.some(keyword => {
+      if (!keyword || keyword.trim() === '') return false;
+      
       const lowerKeyword = keyword.toLowerCase();
-      isMatch = post.title.toLowerCase().includes(lowerKeyword) || 
-                (post.description && post.description.toLowerCase().includes(lowerKeyword));
-    }
-
-    // 날짜 필터링
-    if (isMatch && startDate && endDate) {
-      try {
-        const postDate = parseISO(post.date);
-        const filterStartDate = parseISO(startDate);
-        const filterEndDate = parseISO(endDate);
-
-        isMatch = isWithinInterval(postDate, {
-          start: filterStartDate,
-          end: filterEndDate,
-        });
-      } catch (error) {
-        console.error('날짜 필터링 오류:', error);
-      }
-    }
-
-    return isMatch;
+      return post.title.toLowerCase().includes(lowerKeyword) || 
+             (post.description && post.description.toLowerCase().includes(lowerKeyword));
+    });
   });
 } 

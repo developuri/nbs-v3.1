@@ -6,41 +6,81 @@ import { useBlogStore, Blog } from '../store/blogStore';
 
 export default function BlogManagement() {
   const { blogs, addBlog, removeBlog } = useBlogStore();
-  const [url, setUrl] = useState('');
+  const [urls, setUrls] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [successMessage, setSuccessMessage] = useState<string | null>(null);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     
-    if (!url) {
+    if (!urls.trim()) {
       setError('블로그 URL을 입력해주세요.');
       return;
     }
     
-    if (!url.includes('blog.naver.com')) {
-      setError('현재 네이버 블로그만 지원합니다.');
+    // 줄바꿈으로 구분된 여러 URL을 배열로 변환
+    const urlList = urls.split('\n').filter(url => url.trim());
+    
+    if (urlList.length === 0) {
+      setError('블로그 URL을 입력해주세요.');
+      return;
+    }
+    
+    // 네이버 블로그 URL 확인
+    const nonNaverBlogs = urlList.filter(url => !url.includes('blog.naver.com'));
+    if (nonNaverBlogs.length > 0) {
+      setError('현재 네이버 블로그만 지원합니다: ' + nonNaverBlogs[0]);
       return;
     }
     
     try {
       setIsLoading(true);
       setError(null);
+      setSuccessMessage(null);
       
-      // 블로그 정보 가져오기
-      const response = await axios.post('/api/scrape', { url });
-      const { blogName } = response.data;
+      let addedCount = 0;
+      let duplicateCount = 0;
+      let errorCount = 0;
       
-      // 이미 등록된 URL인지 확인
-      const isDuplicate = blogs.some(blog => blog.url === url);
-      if (isDuplicate) {
-        setError('이미 등록된 블로그입니다.');
-        return;
+      // 각 URL에 대해 처리
+      for (const url of urlList) {
+        const cleanUrl = url.trim();
+        if (!cleanUrl) continue;
+        
+        // 이미 등록된 URL인지 확인
+        const isDuplicate = blogs.some(blog => blog.url === cleanUrl);
+        if (isDuplicate) {
+          duplicateCount++;
+          continue;
+        }
+        
+        try {
+          // 블로그 정보 가져오기
+          const response = await axios.post('/api/scrape', { url: cleanUrl });
+          const { blogName } = response.data;
+          
+          // 블로그 저장
+          addBlog({ name: blogName, url: cleanUrl });
+          addedCount++;
+        } catch (error) {
+          console.error(`'${cleanUrl}' 블로그 추가 오류:`, error);
+          errorCount++;
+        }
       }
       
-      // 블로그 저장
-      addBlog({ name: blogName, url });
-      setUrl('');
+      // 결과 메시지 생성
+      let message = '';
+      if (addedCount > 0) message += `${addedCount}개의 블로그를 추가했습니다. `;
+      if (duplicateCount > 0) message += `${duplicateCount}개의 블로그는 이미 등록되어 있습니다. `;
+      if (errorCount > 0) message += `${errorCount}개의 블로그는 정보를 가져오는데 실패했습니다.`;
+      
+      if (addedCount > 0) {
+        setSuccessMessage(message);
+        setUrls('');
+      } else if (message) {
+        setError(message);
+      }
     } catch (error) {
       console.error('블로그 추가 오류:', error);
       setError('블로그 정보를 가져오는 데 실패했습니다.');
@@ -60,24 +100,27 @@ export default function BlogManagement() {
       <h2 className="text-xl font-semibold mb-4">블로그 주소 등록</h2>
       
       <form onSubmit={handleSubmit} className="mb-6">
-        <div className="flex items-start">
-          <div className="flex-grow">
-            <input
-              type="text"
-              value={url}
-              onChange={(e) => setUrl(e.target.value)}
-              placeholder="네이버 블로그 주소를 입력하세요"
-              className="w-full p-2 border border-gray-300 rounded"
+        <div className="space-y-2">
+          <div>
+            <textarea
+              value={urls}
+              onChange={(e) => setUrls(e.target.value)}
+              placeholder="네이버 블로그 주소를 입력하세요 (여러 개의 주소는 줄바꿈으로 구분)"
+              className="w-full p-2 border border-gray-300 rounded h-32 resize-y"
               disabled={isLoading}
             />
+            <p className="text-sm text-gray-500 mt-1">
+              한 줄에 하나의 블로그 주소를 입력하세요. 예: https://blog.naver.com/blogid
+            </p>
             {error && <p className="text-red-500 text-sm mt-1">{error}</p>}
+            {successMessage && <p className="text-green-500 text-sm mt-1">{successMessage}</p>}
           </div>
           <button
             type="submit"
-            className="ml-2 bg-blue-500 text-white p-2 rounded hover:bg-blue-600 disabled:bg-blue-300"
+            className="bg-blue-500 text-white py-2 px-4 rounded hover:bg-blue-600 disabled:bg-blue-300"
             disabled={isLoading}
           >
-            {isLoading ? '등록 중...' : '등록'}
+            {isLoading ? '등록 중...' : '블로그 등록'}
           </button>
         </div>
       </form>
@@ -96,14 +139,14 @@ export default function BlogManagement() {
                   href={blog.url}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="text-blue-500 hover:underline text-sm"
+                  className="text-blue-500 hover:underline text-sm break-all"
                 >
                   {blog.url}
                 </a>
               </div>
               <button
                 onClick={() => handleRemove(blog.id)}
-                className="text-red-500 hover:text-red-700"
+                className="text-red-500 hover:text-red-700 ml-2 flex-shrink-0"
               >
                 삭제
               </button>
