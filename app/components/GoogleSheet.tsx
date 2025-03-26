@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useRef } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import axios from 'axios';
 import { useBlogStore } from '../../store/blogStore';
 
@@ -8,12 +8,12 @@ import { useBlogStore } from '../../store/blogStore';
 const COLUMNS = Array.from({ length: 26 }, (_, i) => String.fromCharCode(65 + i));
 
 export default function GoogleSheet() {
-  const { scrapedPosts } = useBlogStore();
+  const { scrapedPosts, googleSheetInfo, updateGoogleSheetInfo } = useBlogStore();
   
-  const [sheetUrl, setSheetUrl] = useState('');
-  const [sheetName, setSheetName] = useState('Sheet1');
-  const [titleColumn, setTitleColumn] = useState('A');
-  const [contentColumn, setContentColumn] = useState('B');
+  const [sheetUrl, setSheetUrl] = useState(googleSheetInfo.sheetUrl);
+  const [sheetName, setSheetName] = useState(googleSheetInfo.sheetName);
+  const [titleColumn, setTitleColumn] = useState(googleSheetInfo.titleColumn);
+  const [contentColumn, setContentColumn] = useState(googleSheetInfo.contentColumn);
   const [isLoading, setIsLoading] = useState(false);
   const [credentialsFile, setCredentialsFile] = useState<File | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -21,6 +21,11 @@ export default function GoogleSheet() {
     text: '', 
     type: '' 
   });
+
+  // Store에 값을 저장하는 함수
+  const saveToStore = (field: string, value: string) => {
+    updateGoogleSheetInfo({ [field]: value } as any);
+  };
 
   const validateSheetUrl = (url: string) => {
     // Google Sheets URL 형식: https://docs.google.com/spreadsheets/d/SPREADSHEET_ID/edit
@@ -35,9 +40,11 @@ export default function GoogleSheet() {
       // JSON 파일만 허용
       if (file.type === 'application/json' || file.name.endsWith('.json')) {
         setCredentialsFile(file);
+        updateGoogleSheetInfo({ credentials: file });
         setMessage({ text: '', type: '' });
       } else {
         setCredentialsFile(null);
+        updateGoogleSheetInfo({ credentials: null });
         setMessage({ 
           text: 'JSON 파일만 업로드할 수 있습니다.', 
           type: 'error' 
@@ -184,7 +191,10 @@ export default function GoogleSheet() {
             id="sheetUrl"
             type="text"
             value={sheetUrl}
-            onChange={(e) => setSheetUrl(e.target.value)}
+            onChange={(e) => {
+              setSheetUrl(e.target.value);
+              saveToStore('sheetUrl', e.target.value);
+            }}
             placeholder="https://docs.google.com/spreadsheets/d/..."
             className="w-full p-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500"
           />
@@ -216,6 +226,7 @@ export default function GoogleSheet() {
               <button
                 onClick={() => {
                   setCredentialsFile(null);
+                  updateGoogleSheetInfo({ credentials: null });
                   if (fileInputRef.current) fileInputRef.current.value = '';
                 }}
                 className="ml-2 p-2 text-red-600 hover:text-red-800"
@@ -240,7 +251,10 @@ export default function GoogleSheet() {
             id="sheetName"
             type="text"
             value={sheetName}
-            onChange={(e) => setSheetName(e.target.value)}
+            onChange={(e) => {
+              setSheetName(e.target.value);
+              saveToStore('sheetName', e.target.value);
+            }}
             placeholder="Sheet1"
             className="w-full p-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500"
           />
@@ -254,7 +268,10 @@ export default function GoogleSheet() {
             <select
               id="titleColumn"
               value={titleColumn}
-              onChange={(e) => setTitleColumn(e.target.value)}
+              onChange={(e) => {
+                setTitleColumn(e.target.value);
+                saveToStore('titleColumn', e.target.value);
+              }}
               className="w-full p-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500"
             >
               {COLUMNS.map((col) => (
@@ -270,7 +287,10 @@ export default function GoogleSheet() {
             <select
               id="contentColumn"
               value={contentColumn}
-              onChange={(e) => setContentColumn(e.target.value)}
+              onChange={(e) => {
+                setContentColumn(e.target.value);
+                saveToStore('contentColumn', e.target.value);
+              }}
               className="w-full p-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500"
             >
               {COLUMNS.map((col) => (

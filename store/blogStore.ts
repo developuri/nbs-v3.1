@@ -16,14 +16,24 @@ export interface BlogPost {
   date: string;
 }
 
+export interface GoogleSheetInfo {
+  sheetUrl: string;
+  sheetName: string;
+  titleColumn: string;
+  contentColumn: string;
+  credentials: File | null;
+}
+
 interface BlogState {
   blogs: Blog[];
   scrapedPosts: BlogPost[];
+  googleSheetInfo: GoogleSheetInfo;
   addBlog: (blog: Omit<Blog, 'id'>) => void;
   removeBlog: (id: string) => void;
   addScrapedPost: (post: Omit<BlogPost, 'id'>) => void;
   removeScrapedPost: (id: string) => void;
   clearScrapedPosts: () => void;
+  updateGoogleSheetInfo: (info: Partial<GoogleSheetInfo>) => void;
 }
 
 export const useBlogStore = create<BlogState>()(
@@ -31,6 +41,13 @@ export const useBlogStore = create<BlogState>()(
     (set) => ({
       blogs: [],
       scrapedPosts: [],
+      googleSheetInfo: {
+        sheetUrl: '',
+        sheetName: 'Sheet1',
+        titleColumn: 'A',
+        contentColumn: 'B',
+        credentials: null
+      },
       
       addBlog: (blog) => 
         set((state) => ({
@@ -61,9 +78,26 @@ export const useBlogStore = create<BlogState>()(
         
       clearScrapedPosts: () =>
         set({ scrapedPosts: [] }),
+
+      updateGoogleSheetInfo: (info) =>
+        set((state) => ({
+          googleSheetInfo: { ...state.googleSheetInfo, ...info }
+        })),
     }),
     {
       name: 'blog-storage',
+      partialize: (state) => ({
+        blogs: state.blogs,
+        scrapedPosts: state.scrapedPosts,
+        googleSheetInfo: {
+          sheetUrl: state.googleSheetInfo.sheetUrl,
+          sheetName: state.googleSheetInfo.sheetName,
+          titleColumn: state.googleSheetInfo.titleColumn,
+          contentColumn: state.googleSheetInfo.contentColumn,
+          // File 객체는 직렬화할 수 없으므로 저장하지 않음
+          credentials: null
+        }
+      }),
     }
   )
 ); 
