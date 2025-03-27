@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import axios from 'axios';
 import { format } from 'date-fns';
 import { useBlogStore, BlogPost, KeywordTag } from '../../store/blogStore';
@@ -23,12 +23,14 @@ export default function BlogScrap() {
     blogs, 
     scrapedPosts, 
     keywords,
+    startDate,
     addScrapedPost, 
     removeScrapedPost, 
     clearScrapedPosts,
     setKeywords,
     addKeyword: storeAddKeyword,
-    removeKeyword: storeRemoveKeyword
+    removeKeyword: storeRemoveKeyword,
+    setStartDate
   } = useBlogStore();
   
   const [keywordInput, setKeywordInput] = useState('');
@@ -40,6 +42,29 @@ export default function BlogScrap() {
   const [progress, setProgress] = useState<ScrapProgress | null>(null);
   const [totalFound, setTotalFound] = useState<number | null>(null);
   const [currentBlogName, setCurrentBlogName] = useState<string | null>(null);
+  
+  // 스크랩 중지를 위한 상태와 ref
+  const [stopScrap, setStopScrap] = useState(false);
+  const eventSourceRef = useRef<EventSource | null>(null);
+  
+  // 최근 30일 날짜 계산
+  const [minDate, setMinDate] = useState('');
+  
+  // 컴포넌트 마운트 시 날짜 제한 설정
+  useEffect(() => {
+    const today = new Date();
+    const thirtyDaysAgo = new Date(today);
+    thirtyDaysAgo.setDate(today.getDate() - 30);
+    
+    // YYYY-MM-DD 형식으로 변환
+    const formattedDate = thirtyDaysAgo.toISOString().split('T')[0];
+    setMinDate(formattedDate);
+    
+    // 이미 저장된 날짜가 30일 이전인 경우 초기화
+    if (startDate && new Date(startDate) < thirtyDaysAgo) {
+      setStartDate(null);
+    }
+  }, []);
   
   const handleAddKeyword = () => {
     if (!keywordInput.trim()) return;
@@ -69,6 +94,26 @@ export default function BlogScrap() {
     }
   };
   
+  const handleDateChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setStartDate(e.target.value || null);
+  };
+  
+  // 스크랩 중지 함수
+  const handleStopScrap = () => {
+    setStopScrap(true);
+    
+    // 현재 활성화된 EventSource가 있으면 닫기
+    if (eventSourceRef.current) {
+      eventSourceRef.current.close();
+      eventSourceRef.current = null;
+    }
+    
+    setIsLoading(false);
+    setProgress(null);
+    setCurrentBlogName(null);
+    // 에러 메시지를 설정하지 않고 중지 상태만 처리
+  };
+  
   const handleScrap = async () => {
     if (blogs.length === 0) {
       setError('등록된 블로그가 없습니다. 먼저 블로그를 등록해주세요.');
@@ -76,8 +121,10 @@ export default function BlogScrap() {
     }
     
     try {
-      setIsLoading(true);
+      // 에러 상태 초기화
       setError(null);
+      setIsLoading(true);
+      setStopScrap(false); // 스크랩 시작 시 중지 상태 초기화
       
       // 스크랩 시작 시 이전 결과 초기화
       clearScrapedPosts();
@@ -90,11 +137,21 @@ export default function BlogScrap() {
       const keywordList = keywords.map(k => k.text);
       
       for (const blog of blogs) {
+        // 중지 요청이 있으면 루프 종료
+        if (stopScrap) break;
+        
         try {
           setCurrentBlogName(blog.name);
           
-          // SSE를 사용한 스트리밍 방식으로 요청
-          const eventSource = new EventSource(`/api/scrape/stream?url=${encodeURIComponent(blog.url)}&keywords=${encodeURIComponent(JSON.stringify(keywordList))}`);
+          // SSE를 사용한 스트리밍 방식으로 요청 (날짜 필터 추가)
+          const queryParams = new URLSearchParams({
+            url: blog.url,
+            keywords: JSON.stringify(keywordList),
+            ...(startDate && { startDate })
+          });
+          
+          const eventSource = new EventSource(`/api/scrape/stream?${queryParams}`);
+          eventSourceRef.current = eventSource; // ref에 현재 EventSource 저장
           
           // 이벤트 리스너 등록
           await new Promise<void>((resolve, reject) => {
@@ -140,6 +197,7 @@ export default function BlogScrap() {
               const data = JSON.parse((event as SSEEvent).data);
               console.log('스크랩 완료:', data.message);
               eventSource.close();
+              eventSourceRef.current = null; // ref 초기화
               resolve();
             });
             
@@ -147,6 +205,13 @@ export default function BlogScrap() {
             eventSource.addEventListener('error', (event) => {
               console.error('SSE 오류:', event);
               eventSource.close();
+              eventSourceRef.current = null; // ref 초기화
+              
+              // 중지 요청인 경우 특별한 처리 없이 완료
+              if (stopScrap) {
+                resolve();
+                return;
+              }
               
               // 오류 데이터가 있으면 파싱
               try {
@@ -186,18 +251,22 @@ export default function BlogScrap() {
         setSelectedPost(currentScrapedPosts[0]);
         // 오류 메시지가 남아있으면 지움
         setError(null);
-      } else if (blogs.length > 0) {
-        // 블로그는 있지만 스크랩된 포스트가 없는 경우
+      } else if (blogs.length > 0 && !stopScrap) {
+        // 블로그는 있지만 스크랩된 포스트가 없고, 사용자가 중지하지 않은 경우에만 에러 메시지 표시
         setError('포스트를 찾을 수 없습니다. 다른 키워드를 시도해보세요.');
       }
       
     } catch (error) {
       console.error('스크랩 오류:', error);
-      setError('블로그 스크랩 중 오류가 발생했습니다.');
+      if (!stopScrap) {
+        // 사용자가 중지하지 않은 경우에만 에러 메시지 표시
+        setError('블로그 스크랩 중 오류가 발생했습니다.');
+      }
     } finally {
       setIsLoading(false);
       setProgress(null);
       setCurrentBlogName(null);
+      eventSourceRef.current = null; // ref 초기화
     }
   };
   
@@ -321,9 +390,44 @@ export default function BlogScrap() {
           )}
         </div>
         
+        <div className="mb-5">
+          <label className="block text-sm font-medium text-gray-700 mb-2">
+            시작 날짜 선택
+          </label>
+          <div className="flex items-center">
+            <input
+              type="date"
+              value={startDate || ''}
+              onChange={handleDateChange}
+              min={minDate}
+              max={new Date().toISOString().split('T')[0]}
+              className="p-3 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500"
+            />
+            <span className="ml-3 text-sm text-gray-600">
+              최근 30일 내의 날짜만 선택할 수 있습니다.
+            </span>
+          </div>
+          {startDate && (
+            <div className="mt-2">
+              <button
+                onClick={() => setStartDate(null)}
+                className="text-sm text-gray-600 hover:text-red-600 flex items-center">
+                <span>날짜 필터 초기화</span>
+                <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 ml-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+          )}
+        </div>
+        
         <div className="flex space-x-3">
           <button
-            onClick={handleScrap}
+            onClick={() => {
+              // 에러 메시지가 있으면 먼저 초기화
+              if (error) setError(null);
+              handleScrap();
+            }}
             className="bg-blue-600 text-white px-5 py-2 rounded-md hover:bg-blue-700 disabled:bg-blue-300 transition-colors flex items-center"
             disabled={isLoading}
           >
@@ -346,7 +450,21 @@ export default function BlogScrap() {
           </button>
           
           <button
+            onClick={handleStopScrap}
+            className={`${isLoading ? 'bg-yellow-500 hover:bg-yellow-600' : 'bg-yellow-300 cursor-not-allowed'} text-white px-5 py-2 rounded-md transition-colors flex items-center`}
+            disabled={!isLoading}
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636" />
+            </svg>
+            스크랩 중지
+          </button>
+          
+          <button
             onClick={() => {
+              // 에러 메시지가 있으면 먼저 초기화
+              if (error) setError(null);
+              
               if (window.confirm('모든 스크랩 결과를 삭제하시겠습니까?')) {
                 clearScrapedPosts();
                 setSelectedPost(null);

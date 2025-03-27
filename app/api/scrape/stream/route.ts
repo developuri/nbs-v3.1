@@ -1,6 +1,7 @@
 import axios from 'axios';
 import { XMLParser } from 'fast-xml-parser';
 import * as jsdom from 'jsdom';
+import { parse, isAfter, parseISO } from 'date-fns';
 
 // DOM 파싱 기반 스마트에디터 본문 추출 함수 (기존 코드와 동일)
 const extractSmartEditorContentDOM = (htmlContent: string): string => {
@@ -212,7 +213,7 @@ function processContent(content: string): string {
 }
 
 // 포스트 본문 내용 크롤링 함수
-async function fetchPostContent(url: string): Promise<string> {
+async function fetchPostContent(url: string, signal?: AbortSignal): Promise<string> {
   try {
     console.log(`포스트 본문 크롤링: ${url}`);
     
@@ -236,7 +237,8 @@ async function fetchPostContent(url: string): Promise<string> {
     const response = await axios.get(iframeUrl, {
       headers: {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
-      }
+      },
+      signal: signal
     });
     
     const htmlContent = response.data;
@@ -307,13 +309,14 @@ function extractBlogId(url: string): string | null {
 }
 
 // 블로그 URL에서 블로그 이름 가져오기
-async function getBlogNameFromUrl(url: string): Promise<string> {
+async function getBlogNameFromUrl(url: string, signal?: AbortSignal): Promise<string> {
   try {
     const response = await axios.get(url, {
       headers: {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
       },
-      timeout: 5000
+      timeout: 5000,
+      signal
     });
     
     const html = response.data;
@@ -366,30 +369,46 @@ function filterPostsByKeywords(posts: any[], keywords?: string[]) {
   });
 }
 
+// 날짜 파싱 함수 추가
+const parsePostDate = (dateStr: string): Date | null => {
+  try {
+    // 네이버 블로그 날짜 형식: "2024. 3. 21." 또는 "2024-03-21"
+    if (dateStr.includes('.')) {
+      return parse(dateStr, 'yyyy. M. d.', new Date());
+    } else {
+      return parseISO(dateStr);
+    }
+  } catch (error) {
+    console.error('날짜 파싱 오류:', error);
+    return null;
+  }
+};
+
+// 날짜 필터링 함수
+const isPostAfterStartDate = (postDate: string, startDate: string | null): boolean => {
+  if (!startDate) return true;
+  
+  const parsedPostDate = parsePostDate(postDate);
+  const parsedStartDate = parseISO(startDate);
+  
+  if (!parsedPostDate || !parsedStartDate) return true;
+  
+  return isAfter(parsedPostDate, parsedStartDate) || parsedPostDate.getTime() === parsedStartDate.getTime();
+};
+
 // SSE(Server-Sent Events) 스트림 핸들러
 export async function GET(request: Request) {
-  // URL에서 파라미터 추출
   const { searchParams } = new URL(request.url);
-  const url = searchParams.get('url');
-  const keywordsParam = searchParams.get('keywords');
-  
-  // 파라미터 검증
-  if (!url) {
-    return new Response(
-      createSSEMessage('error', { message: '블로그 URL이 필요합니다.' }),
-      {
-        headers: {
-          'Content-Type': 'text/event-stream',
-          'Cache-Control': 'no-cache',
-          'Connection': 'keep-alive',
-        },
-        status: 400
-      }
-    );
+  const blogUrl = searchParams.get('url');
+  const keywordsJson = searchParams.get('keywords');
+  const startDate = searchParams.get('startDate');
+
+  if (!blogUrl || !keywordsJson) {
+    return new Response('블로그 URL과 키워드가 필요합니다.', { status: 400 });
   }
-  
+
   // 네이버 블로그 URL 검증
-  if (!url.includes('blog.naver.com')) {
+  if (!blogUrl.includes('blog.naver.com')) {
     return new Response(
       createSSEMessage('error', { message: '네이버 블로그 URL만 지원합니다.' }),
       {
@@ -404,7 +423,7 @@ export async function GET(request: Request) {
   }
   
   // 블로그 ID 추출
-  const blogId = extractBlogId(url);
+  const blogId = extractBlogId(blogUrl);
   if (!blogId) {
     return new Response(
       createSSEMessage('error', { message: '유효한 네이버 블로그 URL이 아닙니다.' }),
@@ -422,8 +441,8 @@ export async function GET(request: Request) {
   // 키워드 파싱 (JSON 문자열 형태로 전달됨)
   let keywords: string[] = [];
   try {
-    if (keywordsParam) {
-      keywords = JSON.parse(keywordsParam);
+    if (keywordsJson) {
+      keywords = JSON.parse(keywordsJson);
     }
   } catch (error) {
     console.error('키워드 파싱 오류:', error);
@@ -441,22 +460,66 @@ export async function GET(request: Request) {
   const writer = stream.writable.getWriter();
   const encoder = new TextEncoder();
   
+  // 요청 종료 감지를 위한 설정
+  const abortController = new AbortController();
+  const { signal } = abortController;
+  
+  // 클라이언트 연결 종료 감지
+  const response = new Response(stream.readable, {
+    headers: {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache',
+      'Connection': 'keep-alive',
+    }
+  });
+  
+  // 클라이언트 연결 종료 감지
+  request.signal.addEventListener('abort', () => {
+    console.log('클라이언트 연결이 종료되었습니다. 스크랩을 중지합니다.');
+    abortController.abort();
+  });
+  
+  // 안전하게 스트림에 쓰기 함수 추가
+  const safeWrite = async (message: string) => {
+    // 연결이 끊겼으면 쓰기 시도하지 않음
+    if (signal.aborted) return;
+    
+    try {
+      await writer.write(encoder.encode(message));
+    } catch (error) {
+      // 스트림 닫힘 오류 무시
+      if (error instanceof TypeError && error.message.includes('WritableStream is closed')) {
+        console.log('스트림이 이미 닫혔습니다.');
+      } else if (error instanceof Error && error.name === 'ResponseAborted') {
+        console.log('응답이 중단되었습니다.');
+      } else {
+        console.error('스트림 쓰기 오류:', error);
+      }
+      
+      // 스트림 닫힘 오류가 발생하면 abort 처리
+      if (!signal.aborted) {
+        abortController.abort();
+      }
+    }
+  };
+
   // 비동기 작업 시작
   (async () => {
     try {
       // 시작 이벤트 전송
-      writer.write(encoder.encode(createSSEMessage('start', { message: '스크랩을 시작합니다.' })));
+      await safeWrite(createSSEMessage('start', { message: '스크랩을 시작합니다.' }));
       
       // RSS URL 생성
       const rssUrl = `https://rss.blog.naver.com/${blogId}`;
       console.log('RSS URL:', rssUrl);
       
-      // RSS 피드 가져오기
+      // RSS 피드 가져오기 (signal 전달)
       const response = await axios.get(rssUrl, {
         headers: {
           'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
         },
-        timeout: 10000
+        timeout: 10000,
+        signal
       });
       
       const xmlData = response.data;
@@ -472,7 +535,7 @@ export async function GET(request: Request) {
       const blogName = result.rss?.channel?.title || '네이버 블로그';
       
       // 진행 상황 업데이트
-      writer.write(encoder.encode(createSSEMessage('blog', { blogName })));
+      await safeWrite(createSSEMessage('blog', { blogName }));
       
       // 포스트 추출
       let posts = [];
@@ -500,14 +563,18 @@ export async function GET(request: Request) {
       const filteredPosts = filterPostsByKeywords(posts, keywords);
       console.log(`필터링 후 포스트 수: ${filteredPosts.length}`);
       
+      // 날짜 필터링 추가
+      const dateFilteredPosts = filteredPosts.filter(post => isPostAfterStartDate(post.date, startDate));
+      console.log(`날짜 필터링 후 포스트 수: ${dateFilteredPosts.length} (시작 날짜: ${startDate || '없음'})`);
+      
       // 포스트 수 정보 전송
-      writer.write(encoder.encode(createSSEMessage('count', { 
-        total: filteredPosts.length,
-        message: `${filteredPosts.length}개의 포스트를 찾았습니다.`
-      })));
+      await safeWrite(createSSEMessage('count', { 
+        total: dateFilteredPosts.length,
+        message: `${dateFilteredPosts.length}개의 포스트를 찾았습니다.`
+      }));
       
       // 각 포스트의 내용 가져오기
-      const postsToFetch = filteredPosts;
+      const postsToFetch = dateFilteredPosts;
       console.log(`${postsToFetch.length}개 포스트의 내용 가져오기 시작`);
       
       // 처리된 포스트 목록
@@ -515,6 +582,12 @@ export async function GET(request: Request) {
       
       // 각 포스트마다 500ms 간격으로 요청하여 서버 부하 방지
       for (let i = 0; i < postsToFetch.length; i++) {
+        // 클라이언트 연결 종료 확인
+        if (signal.aborted) {
+          console.log('스크랩이 중단되었습니다.');
+          break;
+        }
+        
         if (i > 0) await delay(500); // 첫 요청 이후 지연
         const post = postsToFetch[i];
         
@@ -526,60 +599,93 @@ export async function GET(request: Request) {
           title: post.title
         };
         
-        // 진행 정보 전송
-        writer.write(encoder.encode(createSSEMessage('progress', progress)));
+        // 진행 정보 전송 (안전하게)
+        await safeWrite(createSSEMessage('progress', progress));
         
-        // 포스트 내용 가져오기
-        const content = await fetchPostContent(post.url);
-        post.content = content;
+        // 중단 확인
+        if (signal.aborted) break;
         
-        // 완료된 포스트 객체 추가
-        processedPosts.push(post);
-        
-        // 포스트 정보 전송
-        writer.write(encoder.encode(createSSEMessage('post', post)));
-        
-        console.log(`포스트 ${progress.current}/${progress.total} 내용 추출 완료 (${progress.percent}%)`);
+        // 포스트 내용 가져오기 (signal 전달)
+        try {
+          const content = await fetchPostContent(post.url, signal);
+          post.content = content;
+          
+          // 완료된 포스트 객체 추가
+          processedPosts.push(post);
+          
+          // 포스트 정보 전송 (안전하게)
+          await safeWrite(createSSEMessage('post', post));
+          
+          console.log(`포스트 ${progress.current}/${progress.total} 내용 추출 완료 (${progress.percent}%)`);
+        } catch (error: any) {
+          if (error.name === 'AbortError' || signal.aborted) {
+            console.log('포스트 처리 중 스크랩이 중단되었습니다.');
+            break;
+          }
+          console.error(`포스트 '${post.title}' 처리 중 오류:`, error);
+        }
       }
       
-      // 완료 이벤트 전송
-      writer.write(encoder.encode(createSSEMessage('complete', { 
-        blogName,
-        posts: processedPosts,
-        message: '모든 포스트 처리가 완료되었습니다.'
-      })));
+      // 연결이 종료되지 않았을 경우에만 완료 이벤트 전송
+      if (!signal.aborted) {
+        // 완료 이벤트 전송
+        await safeWrite(createSSEMessage('complete', { 
+          blogName,
+          posts: processedPosts,
+          message: '모든 포스트 처리가 완료되었습니다.'
+        }));
+      }
       
     } catch (error: any) {
       console.error('블로그 스크랩 에러:', error.message);
       
-      // 오류 이벤트 전송
-      writer.write(encoder.encode(createSSEMessage('error', { 
-        message: '블로그 데이터를 가져오는 중 오류가 발생했습니다.',
-        error: error.message
-      })));
+      // 오류 이벤트 전송 (안전하게)
+      if (!signal.aborted) {
+        await safeWrite(createSSEMessage('error', { 
+          message: '블로그 데이터를 가져오는 중 오류가 발생했습니다.',
+          error: error.message
+        }));
+      }
       
       // RSS가 제공되지 않는 경우
       if (error.response && error.response.status === 404) {
         console.log('RSS 피드를 찾을 수 없습니다. 대체 데이터를 사용합니다.');
-        const blogName = await getBlogNameFromUrl(url);
+        const blogName = await getBlogNameFromUrl(blogUrl, signal);
         
         // 대체 데이터 생성
-        const dummyPosts = generateDummyPosts(url, 10);
+        const dummyPosts = generateDummyPosts(blogUrl, 10);
         const filteredPosts = filterPostsByKeywords(dummyPosts, keywords);
         
-        // 완료 이벤트 (경고와 함께 전송)
-        writer.write(encoder.encode(createSSEMessage('complete', {
-          blogName,
-          posts: filteredPosts,
-          warning: '이 블로그의 RSS 피드를 찾을 수 없습니다. 테스트 데이터가 표시됩니다.'
-        })));
+        // 날짜 필터링 적용
+        const dateFilteredPosts = filteredPosts.filter(post => isPostAfterStartDate(post.date, startDate));
+        
+        // 연결이 종료되지 않았을 경우에만 완료 이벤트 전송
+        if (!signal.aborted) {
+          // 완료 이벤트 (경고와 함께 전송)
+          await safeWrite(createSSEMessage('complete', {
+            blogName,
+            posts: dateFilteredPosts,
+            warning: '이 블로그의 RSS 피드를 찾을 수 없습니다. 테스트 데이터가 표시됩니다.'
+          }));
+        }
       }
     } finally {
-      // 스트림 종료
-      writer.close();
+      // 스트림 종료 (안전하게)
+      try {
+        await writer.close();
+      } catch (error) {
+        // 스트림이 이미 닫혔거나 응답이 중단된 경우 무시
+        if (error instanceof TypeError && error.message.includes('WritableStream is closed')) {
+          console.log('스트림이 이미 닫혔습니다.');
+        } else if (error instanceof Error && error.name === 'ResponseAborted') {
+          console.log('스트림 닫기 중 응답이 중단되었습니다.');
+        } else {
+          console.error('스트림 닫기 오류:', error);
+        }
+      }
     }
   })();
   
   // 스트리밍 응답 반환
-  return new Response(stream.readable, { headers });
+  return response;
 } 

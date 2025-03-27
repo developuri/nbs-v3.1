@@ -34,6 +34,7 @@ interface BlogState {
   scrapedPosts: BlogPost[];
   keywords: KeywordTag[];
   googleSheetInfo: GoogleSheetInfo;
+  startDate: string | null;
   addBlog: (blog: Omit<Blog, 'id'>) => void;
   removeBlog: (id: string) => void;
   removeAllBlogs: () => void;
@@ -45,6 +46,7 @@ interface BlogState {
   removeKeyword: (id: string) => void;
   clearKeywords: () => void;
   updateGoogleSheetInfo: (info: Partial<GoogleSheetInfo>) => void;
+  setStartDate: (date: string | null) => void;
 }
 
 export const useBlogStore = create<BlogState>()(
@@ -53,6 +55,7 @@ export const useBlogStore = create<BlogState>()(
       blogs: [],
       scrapedPosts: [],
       keywords: [],
+      startDate: null,
       googleSheetInfo: {
         sheetUrl: '',
         sheetName: 'Sheet1',
@@ -123,6 +126,9 @@ export const useBlogStore = create<BlogState>()(
         set((state) => ({
           googleSheetInfo: { ...state.googleSheetInfo, ...info }
         })),
+
+      setStartDate: (date) =>
+        set({ startDate: date }),
     }),
     {
       name: 'blog-storage',
