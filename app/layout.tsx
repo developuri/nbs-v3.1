@@ -37,7 +37,7 @@ export default function RootLayout({
       </head>
       <body className={`${inter.className} h-screen flex flex-col`}>
         <header className="bg-blue-600 text-white p-4 shadow-md">
-          <h1 className="text-xl font-bold">블로그 자동화</h1>
+          <h1 className="text-xl font-bold">블로그 스크랩 도구</h1>
         </header>
         <main className="flex-1 flex overflow-hidden">
           {children}

@@ -26,6 +26,7 @@ export interface GoogleSheetInfo {
   sheetName: string;
   titleColumn: string;
   contentColumn: string;
+  linkColumn: string;
   credentials: File | null;
 }
 
@@ -61,6 +62,7 @@ export const useBlogStore = create<BlogState>()(
         sheetName: 'Sheet1',
         titleColumn: 'A',
         contentColumn: 'B',
+        linkColumn: 'E',
         credentials: null
       },
       
@@ -141,6 +143,7 @@ export const useBlogStore = create<BlogState>()(
           sheetName: state.googleSheetInfo.sheetName,
           titleColumn: state.googleSheetInfo.titleColumn,
           contentColumn: state.googleSheetInfo.contentColumn,
+          linkColumn: state.googleSheetInfo.linkColumn,
           // File 객체는 직렬화할 수 없으므로 저장하지 않음
           credentials: null
         }

@@ -1,70 +1,27 @@
-import { google } from 'googleapis';
 import { NextResponse } from 'next/server';
+import { google } from 'googleapis';
+import { promises as fs } from 'fs';
+import { join } from 'path';
 
 interface SheetData {
   sheetUrl: string;
   sheetName: string;
   titleColumn: string;
   contentColumn: string;
+  linkColumn: string;
   posts: {
     id: string;
-    blogId: string;
     title: string;
     content: string;
     url: string;
-    date: string;
   }[];
 }
 
 export async function POST(request: Request) {
   try {
-    // FormData 처리
-    const formData = await request.formData();
-    
-    // 인증 파일 가져오기
-    const credentialsFile = formData.get('credentials') as File;
-    if (!credentialsFile) {
-      return NextResponse.json({ 
-        success: false, 
-        error: '구글 서비스 계정 인증 파일이 없습니다.' 
-      }, { status: 400 });
-    }
-    
-    // 인증 파일 내용 읽기
-    const credentialsBuffer = await credentialsFile.arrayBuffer();
-    const credentialsText = new TextDecoder().decode(credentialsBuffer);
-    
-    // JSON 파싱 시도
-    let credentials;
-    try {
-      credentials = JSON.parse(credentialsText);
-    } catch (e) {
-      return NextResponse.json({ 
-        success: false, 
-        error: '유효한 JSON 형식의 인증 파일이 아닙니다.' 
-      }, { status: 400 });
-    }
-    
-    // 필수 필드 확인
-    if (!credentials.client_email || !credentials.private_key) {
-      return NextResponse.json({ 
-        success: false, 
-        error: '인증 파일에 필수 필드(client_email, private_key)가 없습니다.' 
-      }, { status: 400 });
-    }
-    
-    // 데이터 필드 가져오기
-    const dataField = formData.get('data');
-    if (!dataField) {
-      return NextResponse.json({ 
-        success: false, 
-        error: '시트 데이터가 없습니다.' 
-      }, { status: 400 });
-    }
-    
-    // 데이터 파싱
-    const data: SheetData = JSON.parse(dataField as string);
-    const { sheetUrl, sheetName, titleColumn, contentColumn, posts } = data;
+    // 요청 데이터 파싱
+    const data: SheetData = await request.json();
+    const { sheetUrl, sheetName, titleColumn, contentColumn, linkColumn, posts } = data;
     
     // 시트 URL에서 시트 ID 추출
     const sheetIdMatch = sheetUrl.match(/spreadsheets\/d\/([a-zA-Z0-9_-]+)/);
@@ -76,8 +33,28 @@ export async function POST(request: Request) {
     }
     const spreadsheetId = sheetIdMatch[1];
 
+    // 인증 정보 읽기
+    const envPath = join(process.cwd(), '.env.local');
+    let credentials;
+    try {
+      const envContent = await fs.readFile(envPath, 'utf-8');
+      const credentialsMatch = envContent.match(/GOOGLE_CREDENTIALS=(.+)/);
+      if (!credentialsMatch) {
+        return NextResponse.json({ 
+          success: false, 
+          error: '구글 서비스 계정 인증 정보가 없습니다.' 
+        }, { status: 400 });
+      }
+      credentials = JSON.parse(credentialsMatch[1]);
+    } catch (error) {
+      return NextResponse.json({ 
+        success: false, 
+        error: '인증 정보를 읽는 중 오류가 발생했습니다.' 
+      }, { status: 500 });
+    }
+
     // 시트 범위 계산 (예: A:B, B:C 등)
-    const range = `${sheetName}!${titleColumn}:${contentColumn}`;
+    const range = `${sheetName}!${titleColumn}:${linkColumn}`;
 
     // JWT 클라이언트 생성
     const auth = new google.auth.GoogleAuth({
@@ -124,16 +101,18 @@ export async function POST(request: Request) {
       const columns = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'.split('');
       const titleColIndex = columns.indexOf(titleColumn);
       const contentColIndex = columns.indexOf(contentColumn);
+      const linkColIndex = columns.indexOf(linkColumn);
       
       // 배열을 필요한 크기로 초기화
-      const maxIndex = Math.max(titleColIndex, contentColIndex);
+      const maxIndex = Math.max(titleColIndex, contentColIndex, linkColIndex);
       for (let i = 0; i <= maxIndex; i++) {
         rowData.push('');
       }
       
-      // 제목과 내용 할당
+      // 제목, 내용, 링크 할당
       rowData[titleColIndex] = post.title;
       rowData[contentColIndex] = post.content;
+      rowData[linkColIndex] = post.url;
       
       return rowData;
     });
