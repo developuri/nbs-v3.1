@@ -336,9 +336,9 @@ async function fetchPostContent(url: string): Promise<string> {
     content = processContent(content);
     
     // 너무 긴 콘텐츠는 잘라내기
-    if (content.length > 2000) {
-      content = content.substring(0, 2000) + '...';
-    }
+    // if (content.length > 2000) {
+    //   content = content.substring(0, 2000) + '...';
+    // }
     
     return content;
   } catch (error) {
