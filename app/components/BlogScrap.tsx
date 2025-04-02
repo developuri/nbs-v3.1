@@ -330,7 +330,7 @@ export default function BlogScrap() {
   
   return (
     <div className="max-w-6xl mx-auto">
-      <h2 className="text-2xl font-bold mb-6">블로그 글 스크랩</h2>
+      <h2 className="text-2xl font-bold mb-6">블로그 자동화</h2>
       
       <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-6 text-blue-800">
         <h3 className="font-medium mb-2 flex items-center">
