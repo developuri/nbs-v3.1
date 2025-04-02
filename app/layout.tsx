@@ -1,6 +1,7 @@
 import './globals.css';
 import type { Metadata } from 'next';
 import { Inter } from 'next/font/google';
+import Link from 'next/link';
 
 const inter = Inter({ subsets: ['latin'] });
 
@@ -36,8 +37,24 @@ export default function RootLayout({
         `}</style>
       </head>
       <body className={`${inter.className} h-screen flex flex-col`}>
-        <header className="bg-blue-600 text-white p-4 shadow-md">
-          <h1 className="text-xl font-bold">블로그 스크랩 도구</h1>
+        <header className="bg-blue-600 text-white shadow-md">
+          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div className="flex justify-between h-16">
+              <div className="flex">
+                <Link href="/" className="flex items-center">
+                  <h1 className="text-xl font-bold">블로그 스크랩 도구</h1>
+                </Link>
+              </div>
+              <nav className="flex space-x-4">
+                <Link href="/scrap" className="flex items-center px-3 py-2 rounded-md text-sm font-medium hover:bg-blue-700">
+                  스크랩
+                </Link>
+                <Link href="/gpt" className="flex items-center px-3 py-2 rounded-md text-sm font-medium hover:bg-blue-700">
+                  GPT
+                </Link>
+              </nav>
+            </div>
+          </div>
         </header>
         <main className="flex-1 flex overflow-hidden">
           {children}
