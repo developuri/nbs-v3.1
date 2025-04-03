@@ -5,6 +5,7 @@ import { usePromptStore } from '../store/promptStore';
 import { useGptStore } from '../store/gptStore';
 import { useGptModels } from '../hooks/useGptModels';
 import { PromptTemplate, DEFAULT_TEMPLATE } from '../types/prompt';
+import PromptPreviewModal from './PromptPreviewModal';
 
 export default function PromptTemplates() {
   const { templates, addTemplate, updateTemplate, deleteTemplate, currentTemplate, setCurrentTemplate } = usePromptStore();
@@ -12,6 +13,7 @@ export default function PromptTemplates() {
   const { models, loading, error } = useGptModels(apiKey);
   const [isEditing, setIsEditing] = useState(false);
   const [editIndex, setEditIndex] = useState<number | null>(null);
+  const [previewTemplate, setPreviewTemplate] = useState<PromptTemplate | null>(null);
 
   const handleSubmit = (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
@@ -54,6 +56,10 @@ export default function PromptTemplates() {
     setCurrentTemplate({ ...DEFAULT_TEMPLATE });
     setIsEditing(true);
     setEditIndex(null);
+  };
+
+  const handlePreview = (template: PromptTemplate) => {
+    setPreviewTemplate(template);
   };
 
   return (
@@ -220,8 +226,9 @@ export default function PromptTemplates() {
               name="system"
               defaultValue={currentTemplate.system}
               required
-              rows={4}
-              className="w-full p-2 border border-gray-300 rounded"
+              rows={16}
+              className="w-full p-2 border border-gray-300 rounded min-h-[200px]"
+              placeholder="시스템 프롬프트를 입력하세요. 변수는 {title}, {content}, {url} 형식으로 사용할 수 있습니다."
             />
           </div>
 
@@ -269,6 +276,12 @@ export default function PromptTemplates() {
               </p>
               <div className="flex gap-2">
                 <button
+                  onClick={() => handlePreview(template)}
+                  className="flex-1 bg-green-600 text-white py-1 px-3 rounded text-sm hover:bg-green-700"
+                >
+                  프리뷰
+                </button>
+                <button
                   onClick={() => handleEdit(template, index)}
                   className="flex-1 bg-blue-600 text-white py-1 px-3 rounded text-sm hover:bg-blue-700"
                 >
@@ -285,6 +298,13 @@ export default function PromptTemplates() {
           ))}
         </div>
       )}
+
+      <PromptPreviewModal
+        isOpen={previewTemplate !== null}
+        onClose={() => setPreviewTemplate(null)}
+        template={previewTemplate}
+        apiKey={apiKey}
+      />
     </div>
   );
 } 
