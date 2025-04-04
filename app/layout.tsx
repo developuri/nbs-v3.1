@@ -52,6 +52,9 @@ export default function RootLayout({
                 <Link href="/gpt" className="flex items-center px-3 py-2 rounded-md text-sm font-medium hover:bg-blue-700">
                   GPT
                 </Link>
+                <Link href="/post" className="flex items-center px-3 py-2 rounded-md text-sm font-medium hover:bg-blue-700">
+                  POST
+                </Link>
               </nav>
             </div>
           </div>
