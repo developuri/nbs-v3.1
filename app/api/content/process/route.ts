@@ -57,11 +57,7 @@ export async function POST(request: Request) {
     }
 
     // URL 열을 포함하도록 범위 수정
-    const lastColumn = String.fromCharCode(Math.max(
-      sourceSheet.titleColumn.charCodeAt(0),
-      sourceSheet.contentColumn.charCodeAt(0),
-      sourceSheet.linkColumn?.charCodeAt(0) || 'A'.charCodeAt(0)
-    ));
+    const lastColumn = 'H'; // H열까지 읽도록 고정
     
     const sourceRange = `${sourceSheet.sheetName}!${sourceSheet.titleColumn}:${lastColumn}`;
     const sourceResponse = await sheets.spreadsheets.values.get({
@@ -70,7 +66,17 @@ export async function POST(request: Request) {
     });
 
     const rows = sourceResponse.data.values || [];
+    const headerRow = rows[0] || []; // 헤더 행
     const dataRows = rows.slice(1); // 첫 번째 행은 건너뛰기
+
+    // 헤더에서 {문자} 형태의 변수 찾기
+    const variableColumns = new Map<string, number>();
+    headerRow.forEach((header: string, index: number) => {
+      const match = header.match(/^{(.+)}$/);
+      if (match) {
+        variableColumns.set(match[1], index);
+      }
+    });
 
     // 출력 시트의 기존 데이터 확인
     const outputRange = `${outputSheet.sheetName}!${outputSheet.titleColumn}:${outputSheet.contentColumn}`;
@@ -83,7 +89,8 @@ export async function POST(request: Request) {
     const processedRows = [['제목', '가공된 내용']];
     
     // 처리해야 할 총 항목 수 계산 (이미 처리된 항목 제외)
-    const totalToProcess = dataRows.length;
+    const unprocessedRows = dataRows.filter((_, index) => !existingOutputRows[index + 1]?.[0] || !existingOutputRows[index + 1]?.[1]);
+    const totalToProcess = unprocessedRows.length;
     let processedCount = 0;
 
     // 스트림 응답 생성
@@ -118,21 +125,27 @@ export async function POST(request: Request) {
         await sendProgress(0, totalToProcess, 0);
 
         // GPT API를 사용하여 각 행 처리
+        let currentProgress = 0;
         for (let i = 0; i < dataRows.length; i++) {
           const [title, content] = dataRows[i];
 
           // 이미 결과가 있는 경우 건너뛰기
           if (existingOutputRows[i + 1]?.[0] && existingOutputRows[i + 1]?.[1]) {
             processedRows.push(existingOutputRows[i + 1]);
-            await sendProgress(i + 1, totalToProcess, processedCount);
             continue;
           }
 
           // 프롬프트 템플릿 적용
-          const systemPrompt = template.system
+          let systemPrompt = template.system
             .replace(/{title}/g, title || '')
             .replace(/{content}/g, content || '')
             .replace(/{url}/g, dataRows[i][2] || ''); // URL은 세 번째 열에서 가져옴
+
+          // 동적 변수 치환
+          variableColumns.forEach((columnIndex, variableName) => {
+            const value = dataRows[i][columnIndex] || '';
+            systemPrompt = systemPrompt.replace(new RegExp(`{${variableName}}`, 'g'), value);
+          });
 
           // GPT API 호출
           const gptResponse = await fetch('https://api.openai.com/v1/chat/completions', {
@@ -167,9 +180,10 @@ export async function POST(request: Request) {
           
           processedRows.push([generatedTitle, generatedBody]);
           processedCount++;
+          currentProgress++;
 
-          // 진행 상황 전송
-          await sendProgress(i + 1, totalToProcess, processedCount);
+          // 진행 상황 전송 (이미 처리된 항목 제외)
+          await sendProgress(currentProgress, totalToProcess, processedCount);
         }
 
         // 결과를 출력 시트에 저장

@@ -76,10 +76,18 @@ export default function PromptPreviewModal({ isOpen, onClose, template, apiKey }
       setError(null);
       setResult(null);
 
-      const systemPrompt = template.system
+      // 기본 변수 치환
+      let systemPrompt = template.system
         .replace(/{title}/g, selectedRow.title)
         .replace(/{content}/g, selectedRow.content)
         .replace(/{url}/g, selectedRow.url);
+
+      // 동적 변수 치환
+      Object.entries(selectedRow).forEach(([key, value]) => {
+        if (key !== 'title' && key !== 'content' && key !== 'url') {
+          systemPrompt = systemPrompt.replace(new RegExp(`{${key}}`, 'g'), value || '');
+        }
+      });
 
       const response = await fetch('/api/chat', {
         method: 'POST',
@@ -173,14 +181,25 @@ export default function PromptPreviewModal({ isOpen, onClose, template, apiKey }
                   <h4 className="font-medium text-gray-700 mb-2">내용</h4>
                   <div className="p-3 bg-gray-50 rounded-md whitespace-pre-wrap">{selectedRow.content}</div>
                 </div>
-                <div>
-                  <h4 className="font-medium text-gray-700 mb-2">URL</h4>
-                  <div className="p-3 bg-gray-50 rounded-md">
-                    <a href={selectedRow.url} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline">
-                      {selectedRow.url}
-                    </a>
-                  </div>
-                </div>
+                {/* 기본 변수와 동적 변수들을 모두 표시 */}
+                {Object.entries(selectedRow).map(([key, value]) => {
+                  // title과 content는 이미 위에서 표시했으므로 제외
+                  if (key === 'title' || key === 'content') return null;
+                  return (
+                    <div key={key}>
+                      <h4 className="font-medium text-gray-700 mb-2">{`{${key}}`}</h4>
+                      <div className="p-3 bg-gray-50 rounded-md">
+                        {key === 'url' || key.includes('url') || key.includes('주소') ? (
+                          <a href={value} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline">
+                            {value}
+                          </a>
+                        ) : (
+                          value
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
             ) : (
               <div className="text-gray-500">

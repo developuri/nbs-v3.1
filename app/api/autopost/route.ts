@@ -90,6 +90,23 @@ export async function POST(request: Request) {
     const writer = stream.writable.getWriter();
     const encoder = new TextEncoder();
 
+    // 열 인덱스를 문자에서 숫자로 변환하는 함수
+    const getColumnIndex = (column: string) => {
+      return column.charCodeAt(0) - 65;  // A=0, B=1, C=2, ...
+    };
+
+    const columnIndexes = {
+      title: getColumnIndex(settings.titleColumn),
+      content: getColumnIndex(settings.contentColumn),
+      schedule: settings.scheduleColumn ? getColumnIndex(settings.scheduleColumn) : -1,
+      result: settings.resultColumn ? getColumnIndex(settings.resultColumn) : -1,
+      url: settings.urlColumn ? getColumnIndex(settings.urlColumn) : -1,
+    };
+
+    // 발행되지 않은 포스트 수 계산
+    const unprocessedRows = dataRows.filter(row => row[columnIndexes.result] !== 'Y');
+    const totalToProcess = unprocessedRows.length;
+
     // 진행 상황 전송 함수
     const sendProgress = async (current: number, total: number, processed: number) => {
       const progressData = {
@@ -114,21 +131,9 @@ export async function POST(request: Request) {
     (async () => {
       try {
         // 초기 진행 상황 전송
-        await sendProgress(0, dataRows.length, 0);
+        await sendProgress(0, totalToProcess, 0);
         let processedCount = 0;
-
-        // 열 인덱스를 문자에서 숫자로 변환하는 함수
-        const getColumnIndex = (column: string) => {
-          return column.charCodeAt(0) - 65;  // A=0, B=1, C=2, ...
-        };
-
-        const columnIndexes = {
-          title: getColumnIndex(settings.titleColumn),
-          content: getColumnIndex(settings.contentColumn),
-          schedule: settings.scheduleColumn ? getColumnIndex(settings.scheduleColumn) : -1,
-          result: settings.resultColumn ? getColumnIndex(settings.resultColumn) : -1,
-          url: settings.urlColumn ? getColumnIndex(settings.urlColumn) : -1,
-        };
+        let currentProgress = 0;
 
         // 각 행에 대해 워드프레스 포스팅 처리
         for (let i = 0; i < dataRows.length; i++) {
@@ -136,7 +141,6 @@ export async function POST(request: Request) {
           
           // 이미 발행된 포스트는 건너뛰기
           if (row[columnIndexes.result] === 'Y') {
-            await sendProgress(i + 1, dataRows.length, processedCount);
             continue;
           }
 
@@ -268,7 +272,8 @@ export async function POST(request: Request) {
 
               // 발행 성공 시 카운트 증가 및 진행 상황 전송
               processedCount++;
-              await sendProgress(i + 1, dataRows.length, processedCount);
+              currentProgress++;
+              await sendProgress(currentProgress, totalToProcess, processedCount);
 
             } catch (wpError: any) {
               console.error('워드프레스 API 에러:', {
@@ -295,7 +300,7 @@ export async function POST(request: Request) {
         const completionData = {
           type: 'complete',
           success: true,
-          total: dataRows.length,
+          total: totalToProcess,
           processed: processedCount,
         };
         await writer.write(encoder.encode(`data: ${JSON.stringify(completionData)}\n\n`));

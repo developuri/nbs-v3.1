@@ -50,8 +50,8 @@ export async function GET(request: Request) {
 
     const sheets = google.sheets({ version: 'v4', auth });
 
-    // 데이터 범위 계산
-    const range = `${sheetName}!${titleColumn}:${linkColumn}`;
+    // 데이터 범위 계산 (H열까지)
+    const range = `${sheetName}!${titleColumn}:H`;
 
     // 시트 데이터 가져오기
     const response = await sheets.spreadsheets.values.get({
@@ -60,13 +60,33 @@ export async function GET(request: Request) {
     });
 
     const values = response.data.values || [];
+    const headerRow = values[0] || [];
+    const dataRows = values.slice(1);
+
+    // 헤더에서 {문자} 형태의 변수 찾기
+    const variableColumns = new Map<string, number>();
+    headerRow.forEach((header: string, index: number) => {
+      const match = header.toString().match(/^{(.+)}$/);
+      if (match) {
+        variableColumns.set(match[1], index);
+      }
+    });
 
     // 데이터를 객체 배열로 변환
-    const rows = values.map(row => ({
-      title: row[0] || '',
-      content: row[1] || '',
-      url: row[2] || '',
-    }));
+    const rows = dataRows.map(row => {
+      const rowData: { [key: string]: string } = {
+        title: row[0] || '',
+        content: row[1] || '',
+        url: row[2] || '',
+      };
+
+      // 동적 변수 값 추가
+      variableColumns.forEach((columnIndex, variableName) => {
+        rowData[variableName] = row[columnIndex] || '';
+      });
+
+      return rowData;
+    });
 
     return NextResponse.json({ rows });
   } catch (error) {
