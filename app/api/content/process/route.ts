@@ -3,6 +3,20 @@ import { google } from 'googleapis';
 import { promises as fs } from 'fs';
 import { join } from 'path';
 
+interface SourceSheet {
+  url: string;
+  sheetName: string;
+  titleColumn: string;
+  contentColumn: string;
+  linkColumn?: string;
+}
+
+interface OutputSheet {
+  sheetName: string;
+  titleColumn: string;
+  contentColumn: string;
+}
+
 export async function POST(request: Request) {
   try {
     const body = await request.json();
@@ -42,7 +56,14 @@ export async function POST(request: Request) {
       throw new Error('유효한 구글 시트 URL이 아닙니다.');
     }
 
-    const sourceRange = `${sourceSheet.sheetName}!${sourceSheet.titleColumn}:${sourceSheet.contentColumn}`;
+    // URL 열을 포함하도록 범위 수정
+    const lastColumn = String.fromCharCode(Math.max(
+      sourceSheet.titleColumn.charCodeAt(0),
+      sourceSheet.contentColumn.charCodeAt(0),
+      sourceSheet.linkColumn?.charCodeAt(0) || 'A'.charCodeAt(0)
+    ));
+    
+    const sourceRange = `${sourceSheet.sheetName}!${sourceSheet.titleColumn}:${lastColumn}`;
     const sourceResponse = await sheets.spreadsheets.values.get({
       spreadsheetId: sourceSheetId,
       range: sourceRange,
@@ -109,8 +130,9 @@ export async function POST(request: Request) {
 
           // 프롬프트 템플릿 적용
           const systemPrompt = template.system
-            .replace(/{title}/g, title)
-            .replace(/{content}/g, content);
+            .replace(/{title}/g, title || '')
+            .replace(/{content}/g, content || '')
+            .replace(/{url}/g, dataRows[i][2] || ''); // URL은 세 번째 열에서 가져옴
 
           // GPT API 호출
           const gptResponse = await fetch('https://api.openai.com/v1/chat/completions', {

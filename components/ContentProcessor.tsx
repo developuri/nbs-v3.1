@@ -81,6 +81,7 @@ export default function ContentProcessor() {
             sheetName: googleSheetInfo.sheetName,
             titleColumn: googleSheetInfo.titleColumn,
             contentColumn: googleSheetInfo.contentColumn,
+            linkColumn: googleSheetInfo.linkColumn,
           },
           outputSheet: {
             sheetName: outputSheet.sheetName,

@@ -34,6 +34,13 @@ export default function AutoPosting() {
     type: '',
     text: ''
   });
+  const [progress, setProgress] = useState({
+    current: 0,
+    total: 0,
+    isProcessing: false,
+    completed: false,
+    processedCount: 0
+  });
 
   // settings가 변경될 때마다 스토어에 저장
   useEffect(() => {
@@ -77,6 +84,13 @@ export default function AutoPosting() {
 
       setIsLoading(true);
       setMessage({ type: 'info', text: '자동 포스팅을 시작합니다...' });
+      setProgress({
+        current: 0,
+        total: 0,
+        isProcessing: true,
+        completed: false,
+        processedCount: 0
+      });
 
       // 선택된 블로그 정보 가져오기
       const selectedBlog = blogs.find(blog => blog.id === settings.selectedBlogId);
@@ -107,15 +121,61 @@ export default function AutoPosting() {
         }),
       });
 
-      const data = await response.json();
+      // SSE 처리
+      const reader = response.body?.getReader();
+      const decoder = new TextDecoder();
 
-      if (data.success) {
-        setMessage({ type: 'success', text: '자동 포스팅이 완료되었습니다.' });
-      } else {
-        throw new Error(data.error || '자동 포스팅 중 오류가 발생했습니다.');
+      if (!reader) {
+        throw new Error('스트림을 읽을 수 없습니다.');
+      }
+
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+
+        const chunk = decoder.decode(value);
+        const lines = chunk.split('\n');
+
+        for (const line of lines) {
+          if (line.startsWith('data: ')) {
+            const data = JSON.parse(line.slice(6));
+
+            switch (data.type) {
+              case 'progress':
+                setProgress(prev => ({
+                  ...prev,
+                  current: data.current,
+                  total: data.total,
+                  processedCount: data.processed,
+                  isProcessing: true,
+                }));
+                break;
+
+              case 'complete':
+                setProgress(prev => ({
+                  ...prev,
+                  current: data.total,
+                  total: data.total,
+                  processedCount: data.processed,
+                  isProcessing: false,
+                  completed: true,
+                }));
+                setMessage({ type: 'success', text: '자동 포스팅이 완료되었습니다.' });
+                break;
+
+              case 'error':
+                throw new Error(data.error);
+            }
+          }
+        }
       }
     } catch (error: any) {
       setMessage({ type: 'error', text: error.message });
+      setProgress(prev => ({
+        ...prev,
+        isProcessing: false,
+        completed: false
+      }));
     } finally {
       setIsLoading(false);
     }
@@ -259,30 +319,71 @@ export default function AutoPosting() {
           </div>
         </div>
 
-        {/* 발행 버튼 */}
-        <div>
-          <button
-            onClick={handleStartPosting}
-            disabled={isLoading || !!validateSettings()}
-            className="w-full bg-blue-600 text-white py-2 px-4 rounded-md hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-          >
-            {isLoading ? '발행 중...' : '자동 포스팅 시작'}
-          </button>
-          {validateSettings() && (
-            <p className="mt-2 text-sm text-red-600">{validateSettings()}</p>
-          )}
-        </div>
-
-        {/* 메시지 표시 */}
-        {message.text && (
-          <div className={`mt-4 p-4 rounded-md ${
-            message.type === 'success' ? 'bg-green-50 text-green-800' :
-            message.type === 'error' ? 'bg-red-50 text-red-800' :
-            message.type === 'info' ? 'bg-blue-50 text-blue-800' : ''
-          }`}>
-            {message.text}
+        {/* 진행 상태 */}
+        {(progress.isProcessing || progress.completed) && (
+          <div className="mb-6 p-4 bg-gray-50 rounded-lg border border-gray-200">
+            <div className="mb-4">
+              <div className="flex justify-between text-sm text-gray-600 mb-2">
+                <span>진행률</span>
+                <span>{progress.total > 0 ? Math.round((progress.current / progress.total) * 100) : 0}%</span>
+              </div>
+              <div className="h-2 bg-gray-200 rounded-full overflow-hidden">
+                <div
+                  className={`h-full transition-all duration-300 ${
+                    progress.completed ? 'bg-green-600' : 'bg-blue-600'
+                  }`}
+                  style={{ width: `${progress.total > 0 ? (progress.current / progress.total) * 100 : 0}%` }}
+                />
+              </div>
+            </div>
+            
+            <div className="flex items-center">
+              {progress.isProcessing ? (
+                <>
+                  <div className="animate-spin rounded-full h-4 w-4 border-2 border-blue-600 border-t-transparent mr-2" />
+                  <p className="text-sm text-gray-600">
+                    포스팅 중... ({progress.current}/{progress.total})
+                  </p>
+                </>
+              ) : progress.completed ? (
+                <div className="text-sm text-gray-600">
+                  <p className="flex items-center text-green-600 font-medium mb-1">
+                    <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 13l4 4L19 7" />
+                    </svg>
+                    포스팅 완료
+                  </p>
+                  <p>총 {progress.total}개의 포스트 중 {progress.processedCount}개가 발행되었습니다.</p>
+                </div>
+              ) : null}
+            </div>
           </div>
         )}
+
+        {message.text && (
+          <div className={`mb-6 p-4 rounded-md flex items-start ${
+            message.type === 'error' ? 'bg-red-50 text-red-600' :
+            message.type === 'success' ? 'bg-green-50 text-green-600' :
+            'bg-blue-50 text-blue-600'
+          }`}>
+            <svg className="w-5 h-5 mr-2 mt-0.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              {message.type === 'error' ? (
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+              ) : (
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 13l4 4L19 7" />
+              )}
+            </svg>
+            <span>{message.text}</span>
+          </div>
+        )}
+
+        <button
+          onClick={handleStartPosting}
+          disabled={isLoading}
+          className="w-full bg-blue-600 text-white py-2 px-4 rounded-md hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+        >
+          {isLoading ? '포스팅 중...' : '자동 포스팅 시작'}
+        </button>
       </div>
     </div>
   );
