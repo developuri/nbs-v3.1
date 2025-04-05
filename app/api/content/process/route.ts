@@ -175,7 +175,11 @@ export async function POST(request: Request) {
           
           // 결과물을 제목과 내용으로 분리
           const contentLines = generatedContent.trim().split('\n');
-          const generatedTitle = contentLines[0].replace(/^#\s*/, ''); // '#' 으로 시작하는 마크다운 제목 형식 제거
+          // HTML 태그 제거 및 마크다운 '#' 제거
+          const generatedTitle = contentLines[0]
+            .replace(/<[^>]+>/g, '') // HTML 태그 제거
+            .replace(/^#\s*/, '') // 마크다운 '#' 제거
+            .trim();
           const generatedBody = contentLines.slice(1).join('\n').trim();
           
           processedRows.push([generatedTitle, generatedBody]);
